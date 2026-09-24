@@ -36,7 +36,7 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 ### StaticRE (wave B — one pass each)
 - [ ] Screen capture + classifier pipeline (`VictoryShieldClassifier.exe`) → `findings/10-classifier/`
 - [x] Kernel driver behavior — ANSWERED: CE ships no kernel component; `CEA.sys` is stock Windows Event Aggregation (live-surface §a)
-- [ ] Network filtering / DNS / proxy surface → `findings/12-network/`
+- [x] Network filtering / DNS / proxy surface → `findings/12-network/` — client-side surface + browser DoH lockdown done; DoH resolver/URL-enforcement internals fold into the service pass
 - [ ] Service + IPC architecture (`VictoryShieldCommService.exe`, `ce-file`, local endpoint) → `findings/13-service-ipc/`
 - [x] Watchdog, persistence, anti-tamper (`VSWD.*`, `RestartVS*.exe`, `ProcessPrivileges.dll`) → `findings/14-watchdog/`
 - [x] UI client + local storage + sign-in (`VictoryShield.exe`, `UWPApp.dll`) → `findings/15-ui/`
@@ -65,3 +65,4 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 | WatchdogPass | `findings/14-watchdog/{watchdog,protectors}.md` | ✅ |
 | UiPass | `findings/15-ui/{ui-architecture,signin-and-settings}.md` | ✅ |
 | UpdaterPass | `findings/16-updater/{updater,crash-reporting}.md` | ✅ |
+| NetworkFilterPass | `findings/12-network/{filter-surface,browser-integration}.md` | ✅ |
