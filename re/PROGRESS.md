@@ -34,7 +34,7 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 - [ ] Baseline metadata/imports/strings docs → `findings/00-baseline/`
 
 ### StaticRE (wave B — one pass each)
-- [ ] Screen capture + classifier pipeline (`VictoryShieldClassifier.exe`) → `findings/10-classifier/`
+- [ ] Screen capture + classifier pipeline (`VictoryShieldClassifier.exe`) → `findings/10-classifier/` — capture side DONE (`capture-pipeline.md`: scheduler, file-transaction handoff, restrictions); classifier internals pending its baseline
 - [x] Kernel driver behavior — ANSWERED: CE ships no kernel component; `CEA.sys` is stock Windows Event Aggregation (live-surface §a)
 - [x] Network filtering / DNS / proxy surface → `findings/12-network/` — client-side surface + browser DoH lockdown done; DoH resolver/URL-enforcement internals fold into the service pass
 - [ ] Service + IPC architecture (`VictoryShieldCommService.exe`, `ce-file`, local endpoint) → `findings/13-service-ipc/`
@@ -66,3 +66,4 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 | UiPass | `findings/15-ui/{ui-architecture,signin-and-settings}.md` | ✅ |
 | UpdaterPass | `findings/16-updater/{updater,crash-reporting}.md` | ✅ |
 | NetworkFilterPass | `findings/12-network/{filter-surface,browser-integration}.md` | ✅ |
+| CapturePipelinePass | `findings/10-classifier/capture-pipeline.md` | ✅ |
