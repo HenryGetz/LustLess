@@ -104,8 +104,8 @@ SYSTEM/Administrators/Power Users (Authenticated users get QUERY/STATUS/START on
 | Observation | Evidence |
 |---|---|
 | Backend `208.185.195.49:443` (HTTPS) | Two sockets from `VictoryShieldCommService` (PID 5616) in `CloseWait` at recon |
-| Local IPC listen `127.0.0.1:48867` | PID 5616 — client↔service endpoint `[INFERENCE]` |
-| UDP-ish bound `0.0.0.0:55210`, `0.0.0.0:55148` | PID 5616, dynamic ports |
+| Local IPC listen TCP `127.0.0.1:48867` | PID 5616; service log line "Starting service on 127.0.0.1:48867"; single probe connect/close (20 ms, zero bytes); **zero CE named pipes** of 116 — `findings/03-runtime/process-observation.md` |
+| Two TCP backend sockets, local ephemeral ports 55210/55148 → `208.185.195.49:443` | PID 5616 (earlier "UDP-ish" note was a misread of `Get-NetTCPConnection`'s Bound state — they are TCP) — `findings/03-runtime/process-observation.md` |
 | Telemetry ingest `api.cvnt.net`, cluster `slc_1b` | `metrics` rows in `ce-file` (`host_name`, `ce_cluster` tags) — `findings/02-artifacts/local-db.md` |
 | Per-adapter user-mode DNS proxy on `127.0.0.2` (10.1.1-era logs): "DNS Filter/User server(s)" upstreams `fec0:0:0:ffff::1-3`, 60 s DNS-server-removal enforcement loop | `findings/02-artifacts/logs.md`; 10.1.44 runs here with `DnsProxyDisable=1` (capability present, disabled `[INFERENCE]`) |
 | `DnsProxyDisable` flag exists | DNS-proxy capability exists in product (disabled here) |
@@ -124,7 +124,7 @@ SYSTEM/Administrators/Power Users (Authenticated users get QUERY/STATUS/START on
 
 1. DNS observation mechanism: 10.1.1-era logs prove a per-adapter user-mode DNS proxy (`127.0.0.2`) feeding `dns_activity`; confirm the 10.1.44 code path (proxy disabled here via `DnsProxyDisable=1`) and how `circumventions` window events are captured (SetWinEventHook?) — pin down in StaticRE.
 2. How screen capture is performed (which process, which APIs: GDI/DXGI/Desktop Duplication) and how the classifier consumes frames.
-3. Local IPC protocol on `127.0.0.1:48867` (+ any named pipes/ALPC).
+3. Local IPC protocol on TCP `127.0.0.1:48867` (no named pipes/ALPC observed at runtime) — message framing unknown; wave B service RE → `findings/13-service-ipc/`.
 4. Upload protocol to backend (endpoints, auth, payloads — screenshots vs events).
 5. `.dat.enc` model-blob internals: role split (b1/b2/b3/j1/mn/sw) and encrypted container known; keying/derivation and plaintext formats still open. `ce-user-file` container crypto.
 6. Watchdog loop internals (VSWD ↔ RestartVS*.exe protocol, self-protection enforcement) — surface known (live-surface §d); mechanism in wave B.
