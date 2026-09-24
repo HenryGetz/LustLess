@@ -40,7 +40,7 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 - [ ] Service + IPC architecture (`VictoryShieldCommService.exe`, `ce-file`, local endpoint) → `findings/13-service-ipc/`
 - [x] Watchdog, persistence, anti-tamper (`VSWD.*`, `RestartVS*.exe`, `ProcessPrivileges.dll`) → `findings/14-watchdog/`
 - [x] UI client + local storage + sign-in (`VictoryShield.exe`, `UWPApp.dll`) → `findings/15-ui/`
-- [ ] Updater / telemetry / upload protocol (`WinSparkle` usage, BugSplat, comm logs) → `findings/16-updater-telemetry/`
+- [ ] Updater / telemetry / upload protocol (`WinSparkle` usage, BugSplat, comm logs) → `findings/16-updater-telemetry/` — updater+crash DONE (`findings/16-updater/`); telemetry/upload protocol pending CommService RE
 
 ### Dynamic (wave C)
 - [ ] Runtime process + API tracing — process/IPC half done (`findings/03-runtime/process-observation.md`); Procmon API-trace pass deferred to wave C
@@ -64,3 +64,4 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 | NetworkCapture | `findings/03-runtime/network-capture.md` | ✅ |
 | WatchdogPass | `findings/14-watchdog/{watchdog,protectors}.md` | ✅ |
 | UiPass | `findings/15-ui/{ui-architecture,signin-and-settings}.md` | ✅ |
+| UpdaterPass | `findings/16-updater/{updater,crash-reporting}.md` | ✅ |

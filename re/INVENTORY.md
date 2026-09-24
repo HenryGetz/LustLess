@@ -113,6 +113,7 @@ give-up + support dialog).
 | Telemetry ingest `api.cvnt.net`, cluster `slc_1b` | `metrics` rows in `ce-file` (`host_name`, `ce_cluster` tags) — `findings/02-artifacts/local-db.md` |
 | Per-adapter user-mode DNS proxy on `127.0.0.2` (10.1.1-era logs): "DNS Filter/User server(s)" upstreams `fec0:0:0:ffff::1-3`, 60 s DNS-server-removal enforcement loop | `findings/02-artifacts/logs.md`; 10.1.44 runs here with `DnsProxyDisable=1` (capability present, disabled `[INFERENCE]`) |
 | 601 s registry heartbeat (`LastTelemetryUpdateAt`) | **Local bookkeeping only** — tick 18:41:26.766 UTC captured live: zero packets, zero socket events (11m24s capture, 3 pktmon segments, no CE TLS handshake/SNI in any window) — `findings/03-runtime/network-capture.md` |
+| Update API `getClientUpdate` (JSON: recommendation now/later/none + critical + download links) | WinSparkle fork's alternate appcast callback; nominal feed `https://covenanteyes.com/files/win/sparkle/appcast-10.1.44-master-4222d5a90.xml`; download host allowlist `covenanteyes.com`/`cvnt.net`; DSA support exists but no key configured (trust = HTTPS+allowlist); silent upgrade = session-0 + critical-only + `DisableSilentUpgrade` 1-day re-enable — `findings/16-updater/updater.md` |
 | `DnsProxyDisable` flag exists | DNS-proxy capability exists in product (disabled here) |
 | No machine root cert found matching Covenant/CEA | `certutil -store root` clean at recon |
 
@@ -133,4 +134,4 @@ give-up + support dialog).
 4. Upload protocol to backend: single endpoint `api.cvnt.net` confirmed; idle windows show zero CE TLS handshakes and the 601 s heartbeat is local-only — uploads are activity-correlated (+ hourly `ServerTimeManager` sync, daily WinSparkle appcast per `logs.md`); payload/auth formats open (wave B comm-service RE).
 5. `.dat.enc` model-blob internals: role split (b1/b2/b3/j1/mn/sw) and encrypted container known; keying/derivation and plaintext formats still open. `ce-user-file` container crypto.
 6. Watchdog loop internals — DONE: 1 s session polling, explorer-token `CreateProcessAsUser` relaunch, crash counters + 10-min suppress window, >3 restarts → give-up/support dialog, SCM cmds 243/176 (`findings/14-watchdog/`).
-7. What the legacy Redirector/proxy component does in current installs (active or cleanup-only).
+7. Legacy Redirector/proxy — ANSWERED: cleanup-only (`CovenantEyesProxy.exe /UnregServer` from installer temp dirs; cert deletion fails; component removed in 10.1.44) — `findings/02-artifacts/logs.md` + `findings/16-updater/updater.md`.
