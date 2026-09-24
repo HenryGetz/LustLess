@@ -7,7 +7,7 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 
 | Phase | Status | Notes |
 |---|---|---|
-| Recon | 🔍 | Surface enumerated (`INVENTORY.md`); WFP/driver details in flight |
+| Recon | ✅ | Surface enumerated (`INVENTORY.md`); live verdicts in `findings/01-dynamic-recon/live-surface.md` (pure user-mode product) |
 | Scaffold | ✅ | `re/` layout, README, INVENTORY, this tracker |
 | Intake | 🔍 | Ghidra import + auto-analysis of 11 programs in flight |
 | StaticRE | ⬜ | Per-subsystem passes (wave B after Intake) |
@@ -20,8 +20,8 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 - [x] Enumerate CE filesystem artifacts — `INVENTORY.md` §6
 - [x] Enumerate services, drivers, processes — `INVENTORY.md` §3–4
 - [x] Enumerate registry, persistence, config — `INVENTORY.md` §5
-- [ ] Enumerate network filtering surface — WFP/winsock verdict → `findings/01-dynamic-recon/live-surface.md` §b–c
-- [ ] Hash and pull CE binaries — `re/samples/MANIFEST.sha256`
+- [x] Enumerate network filtering surface — verdict: NO CE WFP/winsock/proxy footprint → `findings/01-dynamic-recon/live-surface.md` §b–c, §e
+- [x] Hash and pull CE binaries — `re/samples/MANIFEST.sha256`
 
 ### Scaffold
 - [x] Create `re/` folder structure
@@ -57,6 +57,6 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 | Pass | Output | Status |
 |---|---|---|
 | GhidraIntake | `findings/00-baseline/` | 🔍 |
-| LiveDynamicRecon | `findings/01-dynamic-recon/live-surface.md` | 🔍 |
+| LiveDynamicRecon | `findings/01-dynamic-recon/live-surface.md` | ✅ |
 | ArtifactDbState | `findings/02-artifacts/{local-db,event-queue,user-file}.md` | 🔍 |
 | ArtifactClassifierLogs | `findings/02-artifacts/{classifier-data,enc-data,logs}.md` | 🔍 |
