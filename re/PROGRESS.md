@@ -11,7 +11,7 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 | Scaffold | ✅ | `re/` layout, README, INVENTORY, this tracker |
 | Intake | 🔍 | Ghidra import + auto-analysis of 11 programs in flight |
 | StaticRE | ⬜ | Per-subsystem passes (wave B after Intake) |
-| Dynamic | 🔍 | Live-surface recon in flight; API/network tracing in wave C |
+| Dynamic | 🔍 | Live recon + network capture done; Procmon API-trace pass remains (wave C) |
 | Consolidation | ⬜ | Master architecture + Linux mapping |
 
 ## Work items
@@ -43,9 +43,9 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 - [ ] Updater / telemetry / upload protocol (`WinSparkle` usage, BugSplat, comm logs) → `findings/16-updater-telemetry/`
 
 ### Dynamic (wave C)
-- [ ] Runtime process + API tracing (capture path, IPC live)
-- [ ] Runtime network capture (endpoints, TLS, payloads)
-- [ ] Driver + filter enumeration live (merged into `live-surface.md`, deepened here)
+- [ ] Runtime process + API tracing — process/IPC half done (`findings/03-runtime/process-observation.md`); Procmon API-trace pass deferred to wave C
+- [x] Runtime network capture — single-endpoint stack, idle-silent, 601 s heartbeat local-only (`findings/03-runtime/network-capture.md`)
+- [x] Driver + filter enumeration live — merged into `findings/01-dynamic-recon/live-surface.md`
 
 ### Consolidation
 - [ ] Master architecture doc → `findings/90-architecture.md`
@@ -61,3 +61,4 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 | ArtifactDbState | `findings/02-artifacts/{local-db,event-queue,user-file}.md` | ✅ |
 | ArtifactClassifierLogs | `findings/02-artifacts/{classifier-data,enc-data,logs}.md` | ✅ |
 | RuntimeObservability | `findings/03-runtime/process-observation.md` | ✅ |
+| NetworkCapture | `findings/03-runtime/network-capture.md` | ✅ |
