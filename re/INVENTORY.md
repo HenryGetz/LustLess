@@ -64,7 +64,11 @@ SYSTEM/Administrators/Power Users (Authenticated users get QUERY/STATUS/START on
 `C:\Program Files\CE` = Everyone DENY delete/delete-child + RX. Uninstall entry:
 `WOW6432Node\{5AC5ED2E-2936-4B54-A429-703F9034938E}` = "Victory Shield" (Covenant Eyes, Inc.,
 10.1.44, InstallShield `-removeonly`). Zero scheduled tasks; no AppInit/IFEO hooks —
-`findings/01-dynamic-recon/live-surface.md` §d.
+`findings/01-dynamic-recon/live-surface.md` §d. Tamper-repair deep-dive: `findings/14-watchdog/`
+(RP: 22 value-protectors over 4 keys via `RegNotifyChangeKeyValue` + 1 s debounced rewrite from
+compiled-in constants; FP: install-dir ACL deny-delete + FileSystemWatcher on ACL changes;
+relaunch = 1 s session polling + `CreateProcessAsUser` via explorer token; >3 crashes/10 min →
+give-up + support dialog).
 
 ## 5. Registry (`HKLM\SOFTWARE\Covenant Eyes\Victory Shield`)
 
@@ -128,5 +132,5 @@ SYSTEM/Administrators/Power Users (Authenticated users get QUERY/STATUS/START on
 3. Local IPC protocol on TCP `127.0.0.1:48867` (no named pipes/ALPC observed at runtime) — message framing unknown; wave B service RE → `findings/13-service-ipc/`.
 4. Upload protocol to backend: single endpoint `api.cvnt.net` confirmed; idle windows show zero CE TLS handshakes and the 601 s heartbeat is local-only — uploads are activity-correlated (+ hourly `ServerTimeManager` sync, daily WinSparkle appcast per `logs.md`); payload/auth formats open (wave B comm-service RE).
 5. `.dat.enc` model-blob internals: role split (b1/b2/b3/j1/mn/sw) and encrypted container known; keying/derivation and plaintext formats still open. `ce-user-file` container crypto.
-6. Watchdog loop internals (VSWD ↔ RestartVS*.exe protocol, self-protection enforcement) — surface known (live-surface §d); mechanism in wave B.
+6. Watchdog loop internals — DONE: 1 s session polling, explorer-token `CreateProcessAsUser` relaunch, crash counters + 10-min suppress window, >3 restarts → give-up/support dialog, SCM cmds 243/176 (`findings/14-watchdog/`).
 7. What the legacy Redirector/proxy component does in current installs (active or cleanup-only).
