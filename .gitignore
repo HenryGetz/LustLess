@@ -1,0 +1,3 @@
+re/samples/*
+!re/samples/MANIFEST.sha256
+!re/samples/README.md
