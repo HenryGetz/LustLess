@@ -97,7 +97,7 @@ SYSTEM/Administrators/Power Users (Authenticated users get QUERY/STATUS/START on
 | `ce-file` | **SQLite 3** (WAL, 4096 B pages) | Tables `install_metadata`, `logins`, `metrics`, `circumventions`, `switch_users`, `dns_activity` + sync-outbox pattern (`status`/`status_changed_at`/`created_at`) — full schema: `findings/02-artifacts/local-db.md` |
 | `ce-user-file` | encrypted page-aligned container (3×4096 B; 21×4096 B in `PreviousConfiguration`) | Uniform ~7.95 bits/byte entropy, per-file IV/key `[INFERENCE]` — `findings/02-artifacts/user-file.md` |
 | `ce_user_event_message_queue` | binary, 2,896 B | Fixed-slot mmap-style queue: superblock + 10 × (8 B length + 256 B payload) — `findings/02-artifacts/event-queue.md` |
-| `C:\Program Files\CE\data\*.dat.enc` (6) | encrypted blobs | `805b3533c9a731909930-b3` / `83b568cc34e776439494-b1` / `d8b85cbaabaf6c1e7b15-b2` (2,323,104 B each), `a076283f3318c8ea4de0-sw` (901,200 B), `cea3215e9378de852a41-j1` (187,248 B), `f160caa8342747d04d8f-mn` (1,248 B). Suffix tokens `-b1/-b2/-b3/-j1/-mn/-sw` TBD |
+| `C:\Program Files\CE\data\*.dat.enc` (6) | **classifier model blobs**, encrypted | `<20hex>-<suffix>.dat.enc`, suffix ∈ {b1,b2,b3,j1,mn,sw} (hex-prefix = content id, suffix = stable role); all sizes %16==0, entropy ≥7.99; loaded via `CovenantEyesClassifier.exe --model=C:\Program Files\CE\data`; b1/b2/b3 share a 9,584-byte identical prefix — `findings/02-artifacts/enc-data.md` |
 
 ## 8. Network
 
@@ -107,6 +107,7 @@ SYSTEM/Administrators/Power Users (Authenticated users get QUERY/STATUS/START on
 | Local IPC listen `127.0.0.1:48867` | PID 5616 — client↔service endpoint `[INFERENCE]` |
 | UDP-ish bound `0.0.0.0:55210`, `0.0.0.0:55148` | PID 5616, dynamic ports |
 | Telemetry ingest `api.cvnt.net`, cluster `slc_1b` | `metrics` rows in `ce-file` (`host_name`, `ce_cluster` tags) — `findings/02-artifacts/local-db.md` |
+| Per-adapter user-mode DNS proxy on `127.0.0.2` (10.1.1-era logs): "DNS Filter/User server(s)" upstreams `fec0:0:0:ffff::1-3`, 60 s DNS-server-removal enforcement loop | `findings/02-artifacts/logs.md`; 10.1.44 runs here with `DnsProxyDisable=1` (capability present, disabled `[INFERENCE]`) |
 | `DnsProxyDisable` flag exists | DNS-proxy capability exists in product (disabled here) |
 | No machine root cert found matching Covenant/CEA | `certutil -store root` clean at recon |
 
@@ -117,13 +118,14 @@ SYSTEM/Administrators/Power Users (Authenticated users get QUERY/STATUS/START on
 - **Zero CE certificates** in machine stores root/ca/my/disallowed/authroot (live-surface §f) — the legacy Redirector cert-service is gone.
 - Edge extension `jmjflgjpcpepeafmmgdpfkogkghcpiha` = Microsoft "Edge relevant text changes" — **confirmed unrelated** to CE (webstore button-label rewrites only; zero network/storage/CE strings) (live-surface §g).
 - Zero scheduled tasks; no AppInit_DLLs/IFEO hooks.
+- Legacy 10.1.1 network stack is **removed** by the 10.1.44 upgrade: Winsock NSP `nmNsp.dll` + LSP `nmSvc.dll`/`nmsvTree.dll` ("LSP Index binary" registry values, `WSCUnInstallNameSpace`), IE extension COM classes, and the `CovenantEyesProxy.exe` (Redirector V3.0.0.48) proxy — installer inventory in `findings/02-artifacts/logs.md`.
 
 ## 10. Open questions
 
-1. How does the pure user-mode client observe DNS resolutions (`dns_activity` — ETW DNS-Client provider? cache polling?) and app/window events (`circumventions` — SetWinEventHook?) — pin down in StaticRE.
+1. DNS observation mechanism: 10.1.1-era logs prove a per-adapter user-mode DNS proxy (`127.0.0.2`) feeding `dns_activity`; confirm the 10.1.44 code path (proxy disabled here via `DnsProxyDisable=1`) and how `circumventions` window events are captured (SetWinEventHook?) — pin down in StaticRE.
 2. How screen capture is performed (which process, which APIs: GDI/DXGI/Desktop Duplication) and how the classifier consumes frames.
 3. Local IPC protocol on `127.0.0.1:48867` (+ any named pipes/ALPC).
 4. Upload protocol to backend (endpoints, auth, payloads — screenshots vs events).
-5. `.dat.enc` format and keying; `ce-user-file` container format.
-6. Anti-tamper posture: service DACLs, watchdog loop, uninstall protection.
+5. `.dat.enc` model-blob internals: role split (b1/b2/b3/j1/mn/sw) and encrypted container known; keying/derivation and plaintext formats still open. `ce-user-file` container crypto.
+6. Watchdog loop internals (VSWD ↔ RestartVS*.exe protocol, self-protection enforcement) — surface known (live-surface §d); mechanism in wave B.
 7. What the legacy Redirector/proxy component does in current installs (active or cleanup-only).

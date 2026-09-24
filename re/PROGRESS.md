@@ -58,5 +58,5 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 |---|---|---|
 | GhidraIntake | `findings/00-baseline/` | 🔍 |
 | LiveDynamicRecon | `findings/01-dynamic-recon/live-surface.md` | ✅ |
-| ArtifactDbState | `findings/02-artifacts/{local-db,event-queue,user-file}.md` | 🔍 |
-| ArtifactClassifierLogs | `findings/02-artifacts/{classifier-data,enc-data,logs}.md` | 🔍 |
+| ArtifactDbState | `findings/02-artifacts/{local-db,event-queue,user-file}.md` | ✅ |
+| ArtifactClassifierLogs | `findings/02-artifacts/{classifier-data,enc-data,logs}.md` | ✅ |
