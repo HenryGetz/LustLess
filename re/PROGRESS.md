@@ -35,7 +35,7 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 
 ### StaticRE (wave B — one pass each)
 - [ ] Screen capture + classifier pipeline (`VictoryShieldClassifier.exe`) → `findings/10-classifier/`
-- [ ] Kernel driver behavior (`CEA.sys`) → `findings/11-driver/`
+- [x] Kernel driver behavior — ANSWERED: CE ships no kernel component; `CEA.sys` is stock Windows Event Aggregation (live-surface §a)
 - [ ] Network filtering / DNS / proxy surface → `findings/12-network/`
 - [ ] Service + IPC architecture (`VictoryShieldCommService.exe`, `ce-file`, local endpoint) → `findings/13-service-ipc/`
 - [ ] Watchdog, persistence, anti-tamper (`VSWD.*`, `RestartVS*.exe`, `ProcessPrivileges.dll`) → `findings/14-watchdog/`
