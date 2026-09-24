@@ -38,8 +38,8 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 - [x] Kernel driver behavior — ANSWERED: CE ships no kernel component; `CEA.sys` is stock Windows Event Aggregation (live-surface §a)
 - [ ] Network filtering / DNS / proxy surface → `findings/12-network/`
 - [ ] Service + IPC architecture (`VictoryShieldCommService.exe`, `ce-file`, local endpoint) → `findings/13-service-ipc/`
-- [ ] Watchdog, persistence, anti-tamper (`VSWD.*`, `RestartVS*.exe`, `ProcessPrivileges.dll`) → `findings/14-watchdog/`
-- [ ] UI client + local storage + sign-in (`VictoryShield.exe`, `UWPApp.dll`) → `findings/15-ui/`
+- [x] Watchdog, persistence, anti-tamper (`VSWD.*`, `RestartVS*.exe`, `ProcessPrivileges.dll`) → `findings/14-watchdog/`
+- [x] UI client + local storage + sign-in (`VictoryShield.exe`, `UWPApp.dll`) → `findings/15-ui/`
 - [ ] Updater / telemetry / upload protocol (`WinSparkle` usage, BugSplat, comm logs) → `findings/16-updater-telemetry/`
 
 ### Dynamic (wave C)
@@ -62,3 +62,5 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 | ArtifactClassifierLogs | `findings/02-artifacts/{classifier-data,enc-data,logs}.md` | ✅ |
 | RuntimeObservability | `findings/03-runtime/process-observation.md` | ✅ |
 | NetworkCapture | `findings/03-runtime/network-capture.md` | ✅ |
+| WatchdogPass | `findings/14-watchdog/{watchdog,protectors}.md` | ✅ |
+| UiPass | `findings/15-ui/{ui-architecture,signin-and-settings}.md` | ✅ |
