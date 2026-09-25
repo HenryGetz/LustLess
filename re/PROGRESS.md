@@ -48,8 +48,8 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 - [x] Driver + filter enumeration live — merged into `findings/01-dynamic-recon/live-surface.md`
 
 ### Consolidation
-- [ ] Master architecture doc → `findings/90-architecture.md`
-- [ ] Linux reimplementation mapping → `findings/91-linux-mapping.md`
+- [x] Master architecture doc → `findings/90-architecture.md`
+- [x] Linux reimplementation mapping → `findings/91-linux-mapping.md`
 - [ ] Finalize tracker + samples manifest
 
 ## In-flight subagent passes
@@ -70,3 +70,5 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 | UploadProtocolPass | `findings/16-updater/upload-protocol.md` | ✅ |
 | ServiceIpcPass | `findings/13-service-ipc/service-ipc.md` | ✅ |
 | FilterEnforcementPass | `findings/12-network/filter-enforcement.md` | ✅ |
+| ArchitecturePass | `findings/90-architecture.md` | ✅ |
+| LinuxMappingPass | `findings/91-linux-mapping.md` | ✅ |
