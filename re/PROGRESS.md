@@ -40,7 +40,7 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 - [ ] Service + IPC architecture (`VictoryShieldCommService.exe`, `ce-file`, local endpoint) → `findings/13-service-ipc/`
 - [x] Watchdog, persistence, anti-tamper (`VSWD.*`, `RestartVS*.exe`, `ProcessPrivileges.dll`) → `findings/14-watchdog/`
 - [x] UI client + local storage + sign-in (`VictoryShield.exe`, `UWPApp.dll`) → `findings/15-ui/`
-- [ ] Updater / telemetry / upload protocol (`WinSparkle` usage, BugSplat, comm logs) → `findings/16-updater-telemetry/` — updater+crash DONE (`findings/16-updater/`); telemetry/upload protocol pending CommService RE
+- [x] Updater / telemetry / upload protocol (`WinSparkle` usage, BugSplat, comm logs) → `findings/16-updater-telemetry/` — DONE: updater+crash (`findings/16-updater/`) + upload protocol (`upload-protocol.md`)
 
 ### Dynamic (wave C)
 - [ ] Runtime process + API tracing — process/IPC half done (`findings/03-runtime/process-observation.md`); Procmon API-trace pass deferred to wave C
@@ -67,3 +67,4 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 | UpdaterPass | `findings/16-updater/{updater,crash-reporting}.md` | ✅ |
 | NetworkFilterPass | `findings/12-network/{filter-surface,browser-integration}.md` | ✅ |
 | CapturePipelinePass | `findings/10-classifier/capture-pipeline.md` | ✅ |
+| UploadProtocolPass | `findings/16-updater/upload-protocol.md` | ✅ |
