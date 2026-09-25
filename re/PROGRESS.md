@@ -37,7 +37,7 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 - [ ] Screen capture + classifier pipeline (`VictoryShieldClassifier.exe`) → `findings/10-classifier/` — capture side DONE (`capture-pipeline.md`: scheduler, file-transaction handoff, restrictions); classifier internals pending its baseline
 - [x] Kernel driver behavior — ANSWERED: CE ships no kernel component; `CEA.sys` is stock Windows Event Aggregation (live-surface §a)
 - [x] Network filtering / DNS / proxy surface → `findings/12-network/` — client-side surface + browser DoH lockdown done; DoH resolver/URL-enforcement internals fold into the service pass
-- [ ] Service + IPC architecture (`VictoryShieldCommService.exe`, `ce-file`, local endpoint) → `findings/13-service-ipc/`
+- [x] Service + IPC architecture (`VictoryShieldCommService.exe`, `ce-file`, local endpoint) → `findings/13-service-ipc/`
 - [x] Watchdog, persistence, anti-tamper (`VSWD.*`, `RestartVS*.exe`, `ProcessPrivileges.dll`) → `findings/14-watchdog/`
 - [x] UI client + local storage + sign-in (`VictoryShield.exe`, `UWPApp.dll`) → `findings/15-ui/`
 - [x] Updater / telemetry / upload protocol (`WinSparkle` usage, BugSplat, comm logs) → `findings/16-updater-telemetry/` — DONE: updater+crash (`findings/16-updater/`) + upload protocol (`upload-protocol.md`)
@@ -68,3 +68,4 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 | NetworkFilterPass | `findings/12-network/{filter-surface,browser-integration}.md` | ✅ |
 | CapturePipelinePass | `findings/10-classifier/capture-pipeline.md` | ✅ |
 | UploadProtocolPass | `findings/16-updater/upload-protocol.md` | ✅ |
+| ServiceIpcPass | `findings/13-service-ipc/service-ipc.md` | ✅ |
