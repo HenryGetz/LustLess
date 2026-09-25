@@ -145,7 +145,7 @@ So neither "health-check failure" nor "filter-component window message" can show
 
 ## Open questions
 
-MUST be answered from `VictoryShieldCommService.exe` once analyzed:
+MUST be answered from `VictoryShieldCommService.exe` once analyzed — **ALL ANSWERED**: see `re/findings/12-network/filter-enforcement.md`. (Correction to this doc: the 10.1.1-era DnsProxy family is NOT teardown-only — it IS the active 10.1.44 enforcement engine, ref-count-activated per signed-in filtering user.)
 1. **DoH resolver internals** — who actually issues the CleanBrowsing DoH queries for `has_dns_filtering` users (curl `CURLOPT_DOH_URL` with `over_https_url`?), how `ipv4/ipv6_primary/secondary` are used, and how resolutions are attributed to `process_id`/`process_name` for `dns_activity`.
 2. **`user_dns_filter` (and `user_info`/`pdl_info`) table writer/owner** — which process creates them and in which DB (confirm/refute the `ce-user-file` binding); who is the authority on `UserDnsFilterSqliteTable::set` from the service side.
 3. **URL-filtering enforcement** — how `has_url_filtering` + `global_domain_overrides`/`custom_domain_overrides` are applied (hosts file? resolver policy? proxy?), incl. the logout "web access off" enforcement point (`USER_LOGOUT` handling vs `CE_SPYMapObj` clearing).
