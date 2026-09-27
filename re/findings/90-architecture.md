@@ -152,6 +152,11 @@ carries aggregate counters and account-level records
    exists, 60 s when the task produces no value. **There is no idle detector** — gates are WTS
    session state (logon/unlock on; lock/logoff off), display-on, screensaver-not-running, and
    classifier-alive (`capture-pipeline.md` §1; `re/findings/15-ui/signin-and-settings.md` §4).
+   Live-validated over a 57.6-min window in which session 1 stayed WTS-locked throughout: **zero**
+   `pdl\` transaction folders and zero classifier-tree events in 1,063,077 captured rows, with the
+   gate-false retry visible in the UI's production log at 5.06 s mean over 27 samples — the static
+   5 000 ms fallback (`re/findings/03-runtime/api-trace.md` §d; the cadence *under activity* is
+   still owed — same doc, Open question 1).
 2. **Capture.** All monitors via DXGI Desktop Duplication (`Win32DxgiCapture`), DX9 fallback,
    HDR tone-map per monitor; each monitor encoded as **PNG** (`im<N>.dat`) by WIC. The same pass
    enumerates windows; windows whose OS display-affinity/DWM state marks them capture-restricted are
@@ -340,6 +345,42 @@ Sources: `re/findings/14-watchdog/watchdog.md`, `re/findings/14-watchdog/protect
    VSWD deletes the ARP entry's `WindowsInstaller`/`ModifyPath` values so the MSI cannot repair/modify
    the install (`watchdog.md` §10–12).
 
+### 3.6 Telemetry heartbeat & metrics upload cycle
+
+Sources: `re/findings/16-updater/upload-protocol.md` §4–5 (tick/outbox mechanism),
+`re/findings/03-runtime/network-capture.md` (601 s heartbeat, zero-packet tick, "frozen"
+`LastTelemetryUploadAt`); live-traced with per-PID attribution over a 57.6-min window on
+2026-09-27 (`re/findings/03-runtime/api-trace.md` §b–e).
+
+1. **The ~601 s tick is the comm service's local bookkeeping pass (PID 5616).** Measured
+   600.90–600.98 s across five consecutive in-window intervals; each tick queries the
+   metrics/crash inputs (`SqlErrors`, `ServiceCrashes`, `ForceCrashCommService`), runs
+   `RegFlushKey` on the service key, stamps `LastTelemetryUpdateAt`, and — [INFERENCE] only when
+   rows are pending — scans `ce-file` (5,593 `ReadFile` inside one 2 s tick window at 09:47:55,
+   absent at later ticks), with **zero network events at the tick instant**. The UI (128096) runs
+   a second, independent 601 s writer for its own `HKCU\…\ClientCrashesSince = 0`
+   (601.07–601.14 s) (`api-trace.md` §b; corroborates `network-capture.md`'s zero-packet tick
+   with per-PID data).
+2. **Upload is a separate event from the tick — the "frozen" `LastTelemetryUploadAt` resolved.**
+   The value moves only on a real upload: at **10:23:34** (2026-09-27) the comm service opened a
+   fresh TLS connection and wrote `ApiTelemetryStatus=success`, `ApiTelemetryResumeTime=(empty)`
+   and `LastTelemetryUploadAt=2026-09-27T15:23:34.289 UTC`, clustered with a 39-row `ce-file`
+   burst (metrics rows → `sent`) — the first upload since 2026-09-20, so `network-capture.md`'s
+   window simply never contained one (`api-trace.md` §b; closes `network-capture.md`
+   Open question 6).
+3. **Backend connections rotate activity-driven, ~301 s per exchange generation.** During upload
+   bursts the comm service dials `208.185.195.49:443` fresh every 301 s
+   (09:43:31 → 09:48:32 → 09:53:33), disconnecting the idle predecessor and preceded ~75–250 ms
+   earlier by a same-PID loopback self-connect pair (9 B send → 1 B reply), then 30 min of
+   silence resumed only around the next upload — an activity-cycle period, not a global
+   keep-alive and not tick-driven (`api-trace.md` §c and Open questions 3, 5; closes
+   `network-capture.md` Open question 1).
+4. **`ce-file` has two live writers.** Every write burst attributes by PID to a cause — comm
+   service 5616: tick bookkeeping, metric inserts at API success (`created_at` exact to the
+   second, e.g. 09:43:39/09:48:40), the upload's `sent` transitions (10:23); UI 128096: its own
+   metric rows on a ~15-min HTTP cycle (09:37/09:52/10:07/10:22) and a backend TLS burst at
+   10:20 (`api-trace.md` §e, §c).
+
 ## 4. State & storage
 
 All paths under `C:\ProgramData\CovenantEyes\` unless noted. The per-install directory name encodes
@@ -401,6 +442,14 @@ any route** (`service-ipc.md` §1):
 | GET | `/local/user/:username:/keys.:doctype:` | Returns a `basicAuthentication` key/secret JSON body (hard-coded sample) |
 | GET | `/static/:resource:` | `local.css` only |
 | any | (fallback) | 404 |
+
+**Live-duty note:** the listener is served but **never used** on its own — across 57.6 min of
+live capture (2026-09-27, locked-idle session) with the UI, service, watchdog and classifier all
+running, 424 netstat samples showed only the `LISTENING` row and **zero** of 259 Procmon network
+events involved port 48867 (`re/findings/03-runtime/api-trace.md` §c): the dashboard and every
+route above stay dormant unless something actively drives them. This extends
+`re/findings/03-runtime/network-capture.md`'s zero-client windows — captured when the UI was not
+even running — to a session where the expected clients existed.
 
 **c) `CE_SPYMapObj` shared memory + window messages** — UI-owned policy block (flag offsets in
 §3.2) with per-request reply slots `ceFilterCheckReply%d` and messages `0x401` (`OnSpyHookAPI`, dead),
@@ -585,9 +634,14 @@ Exact-scope list of what the findings leave open. Items 1–3 are the pending cl
 8. **Uploader/protocol residues.** Which function posts the activity batch and with which envelope
    (`records` vs `activityRecords`), `/v1/status/ping` caller chain, HTTP methods for `/v1/status/*`
    and `/v1/desktop_client_update`, the `ServerTimeManager` hourly constant and
-   `ApiActivityLoggingThread` flush interval, who invokes the `logins.logout_at` writer, and the
-   trigger for "set Telemetry upload time" (live `LastTelemetryUploadAt` stayed frozen) —
-   `re/findings/16-updater/upload-protocol.md` Open questions 1–6.
+   `ApiActivityLoggingThread` flush interval, and who invokes the `logins.logout_at` writer —
+   `re/findings/16-updater/upload-protocol.md` Open questions 1–5. **Resolved (was
+   upload-protocol Open question 6):** the trigger for "set Telemetry upload time" — the earlier
+   "live `LastTelemetryUploadAt` stayed frozen" reading just meant no upload had occurred; the
+   value is written by the comm service (PID 5616) on a **real telemetry upload**, observed live
+   at 10:23:34 on 2026-09-27 with `ApiTelemetryStatus=success` (first upload since 2026-09-20)
+   (`re/findings/03-runtime/api-trace.md` §b; also closes
+   `re/findings/03-runtime/network-capture.md` Open question 6).
 9. **Watchdog/crash residues.** `GetCrashCount`'s `StringBuilder.get_Chars(0)` return (bug vs
    single-digit semantics), the write-side crash-window parameter, what calls VSWD command 176 in
    production, and the six path strings passed to `disableRegistryProtection` —

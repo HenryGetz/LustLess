@@ -11,6 +11,9 @@ total) the CE stack was **completely network-silent**: zero packets to/from
 `208.185.195.49`, zero new connections, zero DNS queries, zero loopback clients.
 The only remote endpoint CE ever uses is the single backend; no update server, no
 classifier-data CDN, no separate auth endpoint, no OCSP traffic was observed.
+(Partially qualified later — `re/findings/03-runtime/api-trace.md` §c caught the
+UI opening `69.41.14.75:80` every 900 s, host unidentified; the comm service still
+spoke only `api.cvnt.net`.)
 The ~601 s `LastTelemetryUpdateAt` registry heartbeat ticks on a strictly
 periodic timer — one tick (18:41:26.766) fell **inside** the capture and produced
 zero CE packets and zero socket events, proving the heartbeat is a purely local
@@ -320,8 +323,14 @@ Cross-correlation with TCP state (evidence: `netcap-segc-tick-window.txt`):
   captured tick — and the new pair was already `CLOSE_WAIT` at first sighting
   (the remote side closes after each exchange). `[INFERENCE]` Reconnects are
   lazy/event-driven (channel needed again, or dead-socket reaping), not
-  tick-driven.
-- `LastTelemetryUploadAt` remained frozen at 2026-09-20T04:35:45 in every read.
+  tick-driven. **Resolved by `re/findings/03-runtime/api-trace.md` §c:** the
+  rotation is activity-driven — a fresh client connect every ~301 s during
+  upload bursts, each preceded by a same-PID loopback self-pair (Open
+  question 1).
+- `LastTelemetryUploadAt` remained frozen at 2026-09-20T04:35:45 in every read —
+  **resolved by `re/findings/03-runtime/api-trace.md` §b:** the value moves only on
+  a real upload (observed 2026-09-27 10:23:34, `ApiTelemetryStatus=success`, written
+  by the comm service); this capture's window contained none (Open question 6).
 
 ## Synthesis
 
@@ -340,6 +349,10 @@ Cross-correlation with TCP state (evidence: `netcap-segc-tick-window.txt`):
    endpoints — no other CE hostname exists in the DNS cache, the DNS-Client ETW
    log, or any SNI. `[INFERENCE]` The two parallel connections likely split
    roles (e.g. events vs. commands) or provide reconnect redundancy.
+   (Later qualified by `re/findings/03-runtime/api-trace.md` §c: in its 2026-09-27
+   window the comm service still spoke only `api.cvnt.net`, but the UI itself also
+   opened `69.41.14.75:80` every 900 s — one endpoint for the uplink, not for the
+   whole stack; that host is unidentified, see api-trace Open question 4.)
 2. **The 601 s heartbeat is local; network activity is separate.** Across
    11m24s of capture the comm service transferred **zero** bytes on the wire,
    and a full tick (18:41:26.766) passed inside the capture with no packets and
@@ -347,7 +360,9 @@ Cross-correlation with TCP state (evidence: `netcap-segc-tick-window.txt`):
    **cycling** — a fresh socket pair per generation (55148/55210 → 55724/55875),
    remote side closing after each exchange (`CLOSE_WAIT` residue) — which is
    event-driven, not timer-driven. Expect bursts at uploads/config pulls, not a
-   fixed short-interval poll.
+   fixed short-interval poll. (Refined by `re/findings/03-runtime/api-trace.md` §c:
+   within an activity burst reconnects are ~301 s-spaced; the bursts themselves
+   start and stop with upload activity — Open question 1.)
 3. **DNS is cache-first.** `api.cvnt.net` carried an ~18 h TTL and was resolved
    from cache; CE issued no DNS queries in the window. OS-level resolution in
    this environment runs over DoH (`cloudflare-dns.com`), which is why plain
@@ -380,10 +395,16 @@ Cross-correlation with TCP state (evidence: `netcap-segc-tick-window.txt`):
 
 ## Open questions
 
-1. **What triggers the backend-connection cycling?** One cycle was observed
-   (55148/55210 → 55724/55875 in the 18:11:37–18:29:5x gap, already `CLOSE_WAIT`
-   at first sighting). It is not tick-driven; a longer capture would show the
-   interval and whether CE or the server initiates each generation.
+1. **ANSWERED — see `re/findings/03-runtime/api-trace.md` (§c, Open question 5).**
+   The rotation is **activity-driven**: a fresh client `Connect → 208.185.195.49:443`
+   every **~301 s** during metrics-upload bursts (09:43:31 → 09:48:32 → 09:53:33,
+   then 30 min of silence, resumed 10:23–10:28 around the telemetry upload), each
+   generation preceded by the client's `Disconnect` of its idle predecessor and by
+   a same-PID loopback self-pair (9 B → 1 B) ~75–250 ms before the dial — CE (the
+   client) initiates every generation; the trigger is upload activity, neither the
+   601 s tick nor a global keep-alive (the exact 301 s unit remains that doc's Open
+   question 5). (Original: one cycle observed in the 18:11:37–18:29:5x gap, already
+   `CLOSE_WAIT` at first sighting; interval and initiator unknown.)
 2. **Why two parallel connections to the same host:port**, with independent
    lifecycles and per-connection `Bound` shadow sockets? Role split (events vs.
    commands) vs. redundancy — needs longer observation or binary RE.
@@ -398,9 +419,17 @@ Cross-correlation with TCP state (evidence: `netcap-segc-tick-window.txt`):
 5. What is the **protocol on 48867** (listener only; byte-less accept/close per
    `process-observation.md`, no client in window)? [INFERENCE] local IPC for
    UI/tools; wire format unknown.
-6. Why is `LastTelemetryUploadAt` frozen at **2026-09-20T04:35:45** while
-   `ApiTelemetryStatus` says `success`? [INFERENCE] "upload" is a distinct,
-   rare event (accounting payload), not the frequent heartbeat.
+6. **ANSWERED — see `re/findings/03-runtime/api-trace.md` (§b).** The [INFERENCE]
+   below was right: "upload" is a distinct, rare event, and both values move only
+   on it. At **10:23:34 on 2026-09-27** the comm service (PID 5616) wrote
+   `ApiTelemetryStatus=success`, `ApiTelemetryResumeTime=(empty)` and
+   `LastTelemetryUploadAt=2026-09-27T15:23:34.289 UTC` alongside a fresh TLS
+   connect and a 39-row `ce-file` burst — the **first upload since 2026-09-20**,
+   so the frozen value/`success` pair was simply the residue of that earlier upload
+   and this capture's window contained none. (Original: why is `LastTelemetryUploadAt`
+   frozen at **2026-09-20T04:35:45** while `ApiTelemetryStatus` says `success`?
+   [INFERENCE] "upload" is a distinct, rare event (accounting payload), not the
+   frequent heartbeat.)
 7. Are the two backend sockets actually **TLS sessions to `api.cvnt.net`**
    (SNI unobservable — no handshake in any window)? Would be confirmed by
    catching a reconnect with a capture running.

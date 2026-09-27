@@ -72,7 +72,9 @@ process), `lustlessctl` (admin/diagnostics CLI).
   (`findings/10-classifier/capture-pipeline.md` §1); fixed short retries (5 s while the
   classifier is down, 40 s default without config, 60 s worst-case fallback). Gate on logind
   `LockedHint`/`Active` (replaces WTS lock/logoff gating, `findings/15-ui/signin-and-settings.md`
-  §4), screensaver inactive, and classifier alive. Unlike CE — which captures and then records
+  §4), screensaver inactive, and classifier alive — the gate pattern is live-validated on CE's
+  side: a full 57.6-min WTS-locked capture produced zero transaction folders and only a silent
+  5.06 s retry (`findings/03-runtime/api-trace.md` §d). Unlike CE — which captures and then records
   `saver_while_capture` telemetry — skip capture entirely while locked or screensaver-active.
 - **Restricted windows — Adapt.** CE never skips or blacks restricted windows: it captures
   them, logs `Possible circumvention: …`, records a `circumventions` row
@@ -227,7 +229,10 @@ On-device, not service-side.**
 - **Dashboard — Skip-by-default / optional.** CE's local dashboard (10 routes: dashboard,
   about, antivirus, per-user settings, DNS settings, DNS-activity log, status, internal
   commands, keys, static CSS — `findings/13-service-ipc/service-ipc.md` §1 route table) is a
-  good information architecture and is worth keeping optionally. If shipped: bind loopback,
+  good information architecture and is worth keeping optionally. Live evidence backs the
+  optionality: CE's own listener took **zero** clients across 57.6 min of capture with the UI
+  running — the surface is dormant unless a human drives it
+  (`findings/03-runtime/api-trace.md` §c). If shipped: bind loopback,
   authenticate with a daemon-issued session token, and drop the keys route entirely. Content is
   embedded/templated like CE's (no on-disk asset dir needed).
 - **Policy state — Adapt.** Replace the `CE_SPYMapObj` shared-memory policy block + window
@@ -278,10 +283,15 @@ modernized.**
   instead of failing the batch, `queued→sending→sent` with claim + reaper, server-requested
   throttling persisted as a resume-not-before timestamp (`ApiTelemetryResumeTime` analog), a
   purely local bookkeeping tick (CE: 600 s steady / 60 s retry — the observed 601 s heartbeat,
-  `findings/03-runtime/network-capture.md`) distinct from upload completion stamps, and a
-  `(server_time, local_ticks)` clock anchor refreshed hourly from `status/time` with system-time
-  fallback (CE's `ServerTimeManager`, `findings/16-updater/upload-protocol.md` §4) used for all
-  event timestamps so offline-tolerant uploads stay consistent.
+  `findings/03-runtime/network-capture.md`; live-validated by `findings/03-runtime/api-trace.md`
+  §b: zero network events at the tick, while `LastTelemetryUploadAt` moved only on a real upload
+  at 10:23:34) distinct from upload completion stamps, and a `(server_time, local_ticks)` clock
+  anchor refreshed hourly from `status/time` with system-time fallback (CE's `ServerTimeManager`,
+  `findings/16-updater/upload-protocol.md` §4) used for all event timestamps so offline-tolerant
+  uploads stay consistent. The uplink follows the same split — fresh connect per exchange,
+  rotated activity-driven (~301 s apart during upload bursts, each preceded by a same-process
+  loopback self-pair; `findings/03-runtime/api-trace.md` §c) — so dial per exchange rather than
+  holding a keep-alive.
 - **Routes — Adapt.** Seven-route-equivalent REST over HTTPS:
   `activity_log` (POST, **the** upload: `webActivityRecord`, `loginActivityRecord`,
   `circumventionRecord`, `switchUserActivityRecord`, `installActivityRecord` — the complete

@@ -73,3 +73,4 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 | ArchitecturePass | `findings/90-architecture.md` | ✅ |
 | LinuxMappingPass | `findings/91-linux-mapping.md` | ✅ |
 | ApiTracePass | `findings/03-runtime/api-trace.md` | ✅ |
+| ArchitectureSyncPass | `findings/90-architecture.md` + `91` + `03-runtime/network-capture.md` sync | ✅ |
