@@ -43,7 +43,7 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 - [x] Updater / telemetry / upload protocol (`WinSparkle` usage, BugSplat, comm logs) → `findings/16-updater-telemetry/` — DONE: updater+crash (`findings/16-updater/`) + upload protocol (`upload-protocol.md`)
 
 ### Dynamic (wave C)
-- [ ] Runtime process + API tracing — process/IPC half done (`findings/03-runtime/process-observation.md`); Procmon API-trace pass deferred to wave C
+- [x] Runtime process + API tracing — Procmon pass DONE (`findings/03-runtime/api-trace.md`: real v10.1.44 classifier cmdline + ppid chains, heartbeat writer attribution, 48867 = zero clients, lock-gate verdict, ce-file writers); pdl cadence-under-activity table = Open question #1 pending session unlock
 - [x] Runtime network capture — single-endpoint stack, idle-silent, 601 s heartbeat local-only (`findings/03-runtime/network-capture.md`)
 - [x] Driver + filter enumeration live — merged into `findings/01-dynamic-recon/live-surface.md`
 
@@ -72,3 +72,4 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 | FilterEnforcementPass | `findings/12-network/filter-enforcement.md` | ✅ |
 | ArchitecturePass | `findings/90-architecture.md` | ✅ |
 | LinuxMappingPass | `findings/91-linux-mapping.md` | ✅ |
+| ApiTracePass | `findings/03-runtime/api-trace.md` | ✅ |
