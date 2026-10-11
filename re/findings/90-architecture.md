@@ -2,8 +2,10 @@
 
 This document consolidates the completed subsystem findings into one architecture view of the
 Covenant Eyes **Victory Shield 10.1.44** Windows client. It is a synthesis: every claim cites the
-findings document that proved it, and mechanism detail stays in those documents. `[INFERENCE]`
-marks synthesized or unproven statements, using the same convention as the subsystem docs. Non-goals:
+findings document that proved it, and mechanism detail stays in those documents. Inference tags
+were audited (see `## Inference audit log` at the end); each former tag now carries its verdict
+inline — `[VERIFIED: <cite>]`, `[INFERENCE — unresolved: <what is missing>]`, or
+`[DEFERRED: classifier-internals pass]`. Non-goals:
 no Linux design decisions (that is `re/findings/91-linux-mapping.md`), no re-litigation of findings,
 no new RE. Source index: `re/INVENTORY.md` (surface inventory), `re/findings/00-baseline/INDEX.md`
 (binary inventory), `01-dynamic-recon/`, `02-artifacts/`, `03-runtime/`, `10-classifier/`,
@@ -249,7 +251,18 @@ Sources: `re/findings/12-network/filter-surface.md` (state model, UI side),
    only (`filter-enforcement.md` §7; `filter-surface.md` §6).
 8. **Logout = no web access.** The tray flow warns "Signing out will disconnect you from the
    Internet", sends `USER_LOGOUT` (`0x4c`), and the service re-evaluates the proxy switch; with the
-   sticky-on gate the proxy keeps answering from an empty policy — fail-closed by [INFERENCE]
+   sticky-on gate the proxy keeps listening with zero users (user-count teardown suppressed —
+   verified, `deactivateDnsProxy` gate `FUN_14023d8a0`), and what it then answers is now known —
+   ⚠ evidence correction: the proxy does **not** fail closed at zero users. Zero-user requests
+   take the no-filter-socket branch (`request+0x41e0 == 0`) of `DnsProxyRequest::processDnsRequest`
+   `FUN_1402ba390` and are answered **fail-open** with `resolution_type` 2 `UnrestrictedUnFiltered`
+   (or 3 `UnrestrictedAlwaysAllowable` when the always-allowable predicate `FUN_14038d2b0` hits),
+   served from the user-path resolver answer (the filter endpoint is appended only when
+   `+0x41e0 != 0`; the `(user: …, filter: …)` log pairing identifies the `param_3` candidate as the
+   user-path one)
+   [VERIFIED: `FUN_1402ba390` decompiled this audit; code↔name mapping
+   `re/findings/12-network/filter-enforcement.md` verdict-b table — closes
+   `filter-enforcement.md` Open question 5]
    (`re/findings/15-ui/signin-and-settings.md` §5; `filter-enforcement.md` §5).
 
 ### 3.3 Settings & authentication
@@ -264,7 +277,15 @@ Sources: `re/findings/15-ui/signin-and-settings.md`, `re/findings/13-service-ipc
    etc.) (`signin-and-settings.md` §1–3).
 2. **Credential storage.** API credentials live in the `api_credentials` SQLite table
    (`user_key`, `user_secret`, `password`, `username`) — not present in the captured `ce-file`, so
-   [INFERENCE: `ce-user-file`] (`upload-protocol.md` §2). The same key/secret pair is what the
+   bound to `ce-user-file` by elimination only
+   [INFERENCE — unresolved: connector-level binding of `ApiCredentialsSqliteTable` not traced (its
+   INSERT/UPDATE helper `FUN_140261670`, decompiled this audit, takes the connector from
+   `table+8`, but the construction site was not followed); the classifier-internals pass asserts
+   `api_credentials` lives in `ce-user-file`
+   (`re/findings/10-classifier/classifier-internals-client.md` §4) but likewise traces no
+   connector; lazy table creation — now proved real (`screenshot_telemetry` is a lazily created
+   `ce-file` table, `## Open items` 6) — keeps the elimination from closing; last examined
+   `FUN_140261670` + `upload-protocol.md` §2] (`upload-protocol.md` §2). The same key/secret pair is what the
    uploader sends as HTTP Basic on all seven REST routes. Login sessions are rows in `ce-file.logins`
    (UI writes via `UserLoginSqliteTable`; the service closes stale rows at startup — `resolve open
    logins`). Cached re-login reads `getLastUserCredsFromDatabase`; a "confirm your password" mode
@@ -355,9 +376,13 @@ Sources: `re/findings/16-updater/upload-protocol.md` §4–5 (tick/outbox mechan
 1. **The ~601 s tick is the comm service's local bookkeeping pass (PID 5616).** Measured
    600.90–600.98 s across five consecutive in-window intervals; each tick queries the
    metrics/crash inputs (`SqlErrors`, `ServiceCrashes`, `ForceCrashCommService`), runs
-   `RegFlushKey` on the service key, stamps `LastTelemetryUpdateAt`, and — [INFERENCE] only when
-   rows are pending — scans `ce-file` (5,593 `ReadFile` inside one 2 s tick window at 09:47:55,
-   absent at later ticks), with **zero network events at the tick instant**. The UI (128096) runs
+   `RegFlushKey` on the service key, stamps `LastTelemetryUpdateAt`, and — [INFERENCE —
+   unresolved: the trigger for the `ce-file` scan; the single observed full scan (5,593 `ReadFile`
+   inside one 2 s tick window at 09:47:55, absent at later ticks) coincided with the 09:43–09:53
+   API-activity burst, but later ticks read zero `ce-file` pages while metrics rows stayed unsent
+   until 10:23, so "only when rows are pending" is not established; last examined `api-trace.md`
+   §b + `re/samples/runtime/api-trace-b-registry-tick.csv`] — scans `ce-file`, with
+   **zero network events at the tick instant**. The UI (128096) runs
    a second, independent 601 s writer for its own `HKCU\…\ClientCrashesSince = 0`
    (601.07–601.14 s) (`api-trace.md` §b; corroborates `network-capture.md`'s zero-packet tick
    with per-PID data).
@@ -391,7 +416,7 @@ preserves the prior `ce-user-file` in `PreviousConfiguration\`
 | Store | Where | Format | Writers | Readers | Notes / source |
 |---|---|---|---|---|---|
 | `ce-file` | `VictoryShieldv010.001.044\ce-file` | Plaintext SQLite 3 (WAL, 4 KiB pages) | Comm service (all outbox INSERTs/UPDATEs); UI (`logins`) | Comm service uploader + local dashboard | Tables `install_metadata`, `logins`, `metrics`, `circumventions`, `switch_users`, `dns_activity` with `(status, status_changed_at, created_at)` outbox triple and `(username, status, …)` indexes — `re/findings/02-artifacts/local-db.md` |
-| `ce-user-file` | same dir (prev. copy in `PreviousConfiguration\`) | **SQLCipher 4** SQLite (AES-256-CBC + HMAC-SHA512 page MAC + PBKDF2-HMAC-SHA512; 4 KiB pages) | **UI** (`UserDnsFilterSqliteTable::set`, `UserInfoSqliteTable::set`); service performs schema migrations only | Service (settings cache, DNS filter config, credentials); classifier attempts to attach a "user database" at startup (non-fatal SQLite error 26) [INFERENCE: this container] | Hardcoded passphrase `AN0ther$uper$ecretKEY4This` (XOR keystream `83 ad c3 4b 1a 47 d6 f8`) — `re/findings/13-service-ipc/service-ipc.md` §5; container stats `re/findings/02-artifacts/user-file.md`. Tables incl. `user_info`, `user_dns_filter`, `global_domain_overrides`, `custom_domain_overrides`; `api_credentials`, `pdl_info`, `user_login`, `screenshot_telemetry`, `telemetry` are [INFERENCE: same container] (`service-ipc.md` §4, `upload-protocol.md` §2) |
+| `ce-user-file` | same dir (prev. copy in `PreviousConfiguration\`) | **SQLCipher 4** SQLite (AES-256-CBC + HMAC-SHA512 page MAC + PBKDF2-HMAC-SHA512; 4 KiB pages) | **UI** (`UserDnsFilterSqliteTable::set`, `UserInfoSqliteTable::set`); service performs schema migrations only | Service (settings cache, DNS filter config, credentials); classifier ATTACHes this container as `userdb` at startup (non-fatal SQLite error 26) [VERIFIED: `ce-user-file` literal + `CREATE TABLE IF NOT EXISTS userdb.telemetry …` + `Could not attach to user database (c)/(t)` strings in `VictoryShieldClassifier.exe` (this audit); `re/findings/10-classifier/classifier-internals-classifier.md` Logging taxonomy] | Hardcoded passphrase `AN0ther$uper$ecretKEY4This` (XOR keystream `83 ad c3 4b 1a 47 d6 f8`) — `re/findings/13-service-ipc/service-ipc.md` §5; container stats `re/findings/02-artifacts/user-file.md`. Tables incl. `user_info`, `user_dns_filter`, `global_domain_overrides`, `custom_domain_overrides`; `api_credentials`, `pdl_info`, `user_login` are [INFERENCE — unresolved: elimination-only same-container bindings (each process opens exactly two DBs; tables absent from the complete captured `ce-file` schema); connector-level bindings not traced; last examined `FUN_140261670`/`FUN_140268ba0` decompiles this audit] (`service-ipc.md` §4, `upload-protocol.md` §2); `telemetry` (the classifier's key/value `userdb.telemetry`) is verified in this container; ⚠ evidence correction: `screenshot_telemetry` is a **`ce-file`** table, not this container (store ctor `FUN_14013f840` opens `ce-file` — `re/findings/10-classifier/classifier-internals-client.md` §3; created lazily, hence absent from the captured `ce-file` schema) |
 | `ce_user_event_message_queue` | same dir | Fixed-slot mapped file: 256 B superblock + 10 × (8 B length + 256 B payload) | UI (send), comm service (recv + startup `QUIT/IgnoreMe` priming) | Comm service listener | Wire = 1 code byte + payload — `re/findings/02-artifacts/event-queue.md`, `re/findings/13-service-ipc/service-ipc.md` §2 |
 | `ce_service_event_message_queue` | same dir | Same shape, 10 × 512 B slots | Comm service (`sendClientNotification`) | UI (`ServiceEventMessageQueueListener`) | Code 2 = `NOTIFICATION`, 2×6×100 ms retries — `service-ipc.md` §2 |
 | `CE_SPYMapObj` (+ `CE_SPYMutexObj`) | named file mapping, 0x50AF8 B | Binary shared-memory policy block | UI (`OnCreate` creates; `setGlobalUserState` writes flags/username) | Legacy filter peers via window messages `0x401–0x407`/`0x428` + `ceFilterCheckReply%d` slots (none live in 10.1.44) | Offsets in `## 3.2`; `re/findings/15-ui/ui-architecture.md` §4b. The comm service never touches it (`service-ipc.md` §6) |
@@ -471,13 +496,13 @@ metrics; server-requested throttling persists in `ApiTelemetryStatus`/`ApiTeleme
 
 | Route | Method | Purpose | Trigger |
 |---|---|---|---|
-| `/v1/status/time` | GET [INFERENCE] | Server clock sync → `(server time, local ticks)` baseline | Hourly (`ServerTimeManager::sync`, median 3,600.7 s) |
-| `/v1/status/ping` | GET [INFERENCE] | API reachability pre-flight | callback-registered |
+| `/v1/status/time` | GET [INFERENCE — unresolved: HTTP method; traced this audit from the URI factory `FUN_140205ca0` through the `Uri` ctor `FUN_1401d8a80` (scheme default `http` `0x1409a74d4`, no verb field) and `AuthProvidedHttpClient::communicate` `FUN_14022ef50` (virtual dispatch into the libcurl layer); no `GET`/`POST` literal exists in the binary — defined-string regex `^(GET\|POST\|PUT\|HEAD)$` is empty; tracker `re/findings/16-updater/upload-protocol.md` Open question 3] | Server clock sync → `(server time, local ticks)` baseline | Hourly (`ServerTimeManager::sync`, median 3,600.7 s) |
+| `/v1/status/ping` | GET [INFERENCE — unresolved: method, same trace as the `/v1/status/time` row] | API reachability pre-flight | callback-registered |
 | `/v2/user/{username}/report/activity_log.json` | POST | **The accountability upload**: batched `webActivityRecord`/`loginActivityRecord`/`circumventionRecord`/`switchUserActivityRecord`/`installActivityRecord` with `client{arch,platform,platformVersion,version}` envelope | `ApiActivityLoggingThread`, batch 100, per-user |
 | `/v1/metrics` | POST | `metrics` rollups (1-hour buckets, indexed/cardinal/incidental tags) | timer + `SEND_METRICS` |
 | `/v1/logs/store` | POST | API request/response event-log rows | periodic |
 | `/v1/telemetry/store` | POST | Device/telemetry counters (`telemetry` table) | timer + `SEND_TELEMETRY` |
-| `/v1/desktop_client_update` | POST [INFERENCE] | `getClientUpdate` update recommendation (`recommendation` now/later/none, `critical`, links) | daily (86,400 s) WinSparkle check |
+| `/v1/desktop_client_update` | POST [INFERENCE — unresolved: method of the comm-service's own WinSparkle-path call; same trace as the `/v1/status/time` row. (The classifier's `ht.dat` template for this same URL is proven POST/`NO_AUTH` — `re/findings/10-classifier/classifier-internals-classifier.md` §C-2 — but that is a different caller)] | `getClientUpdate` update recommendation (`recommendation` now/later/none, `critical`, links) | daily (86,400 s) WinSparkle check |
 | `/v2/user/{username}.json` | GET | `CeUserSettings` service flags (`services.accountability/filter/screen accountability/url accountability/url filtering/dns filtering`) | sign-in / settings refresh (UI) |
 | `/v2/user/{username}/filter/settings/dns.json` | GET | `GenericDnsFilter` (DoH URL, level, fallback resolvers) | settings refresh / migration (UI) |
 | `/v2/client/filter/settings/domains.json` | GET | Global/custom domain-override lists | settings refresh (UI) |
@@ -575,7 +600,7 @@ The recon VM was upgraded in place on 2026-09-21 (`InstallMode=upgrade`); the fu
 | UI binary | `CovenantEyes.exe` | `VictoryShield.exe` (renamed; Run value rewritten) | `logs.md` |
 | Comm service | `CovenantEyesCommService.exe` / service `CovenantEyesCommService` | `VictoryShieldCommService.exe` / service `VictoryShieldCommService` (same 8 deps) | `logs.md` |
 | Watchdog | `CEWD.exe` / service `CEWD` | `VSWD.exe`+`VSWD.dll` / service `VSWD` | `logs.md` |
-| Classifier | `CovenantEyesClassifier.exe` (`--version=10.1.1`) | `VictoryShieldClassifier.exe` (same CLI contract [INFERENCE]; upgrade kills both names) | `re/findings/02-artifacts/classifier-data.md` |
+| Classifier | `CovenantEyesClassifier.exe` (`--version=10.1.1`) | `VictoryShieldClassifier.exe` (same CLI contract [VERIFIED: the shipped 10.1.44 binary parses `--model/--data/--cache/--version` (+ `--verbose`) cxxopts-style at `FUN_14184ff40`, with the exact flag-name log strings (`PDL-EDI data folder path:` etc.) — `re/findings/10-classifier/classifier-internals-classifier.md` "CLI contract"]; upgrade kills both names) | `re/findings/02-artifacts/classifier-data.md` |
 | Network stack | Winsock NSP `nmNsp.dll` + LSP `nmSvc.dll`/`nmsvTree.dll` ("LSP Index binary" values), legacy `CovenantEyesProxy.exe` (Redirector V3.0.0.48) proxy/cert/COM, IE BHO `ceie`, Firefox extension, Chrome force-install | **All removed** — NSP uninstall (`WSCUnInstallNameSpace`, error 10022 = no-op on clean systems), `LSP_UnInstalling`, proxy `/UnregServer` cleanup, browser-extension removal code; only DoH lockdown remains | `logs.md`; `re/findings/12-network/browser-integration.md`; `re/findings/01-dynamic-recon/live-surface.md` §c, §f |
 | Data dirs | `ProgramData\CovenantEyes\WindowsClientv010.001.001\` | `…\VictoryShieldv010.001.044\` freshly created (`createDatabaseFiles`); old `ce-user-file` copied to `PreviousConfiguration\`; version-encoded dir names enable side-by-side rollback | `logs.md`; `user-file.md` |
 | Settings migration | per-user legacy key `…\SOFTWARE\Covenant Eyes\kckt0717` (`LSP Index binary`, `Time binary`, …) | key deleted as legacy; `InstallMode=upgrade` kept; `DnsProxyDisable=1` written; `DisableSilentUpgrade`/`SilentUpgradeDisabledAt` removed; telemetry values re-stamped | `logs.md`; `updater.md` §8 |
@@ -612,17 +637,37 @@ Exact-scope list of what the findings leave open. Items 1–3 are the pending cl
 4. **`DnsProxyDisable` semantics cross-check.** The enforcement code reads value `1` as "proxy may
    run and user-count teardown is suppressed" (sticky-on) while `vs-config`'s
    `disableDnsProxy`(→1)/`enableDnsProxy`(→0) labels say the opposite; confirm the intended contract
-   before treating either as normative. Also unverified: exactly what the proxy answers with zero
-   signed-in users (the fail-closed claim is [INFERENCE])
-   (`re/findings/12-network/filter-enforcement.md` Open questions 2, 5).
+   before treating either as normative. ⚠ evidence correction on the second half of this item: the
+   fail-closed claim is **contradicted** — what the proxy answers with zero signed-in users is now
+   verified fail-open (`resolution_type` 2/3, user-path answer; see §3.2 item 8)
+   [VERIFIED: `FUN_1402ba390` decompiled this audit]
+   (`re/findings/12-network/filter-enforcement.md` Open question 2; its Open question 5 is closed
+   by this audit).
 5. **`DnsProxy::updateServerLists` internals** — exact mapping of `user_dns_filter` fallback resolvers
    vs adapter resolvers into the "DNS Filter"/"DNS User" lists, when DoH is preferred over plain UDP,
-   the RFC 8484 payload encoder (GET+base64url [INFERENCE]), and the live cadences of
+   the RFC 8484 payload encoder (GET+base64url [VERIFIED this audit: the encoder is `FUN_14038e320`,
+   using the URL-safe alphabet `A–Za–z0-9-_`; `DnsProxySocket::sendDohRequest` `FUN_1402d7f50`
+   concatenates its output after the `"?dns="` literal `0x1409b9db8` and truncates the encoder's
+   emitted `.`-padding at the first `.`, i.e. unpadded base64url per RFC 8484 §4.1.1;
+   `DnsHttpClient::async_request` `FUN_1402da150` carries only (host, port, target) — no verb
+   parameter — for a query-string-only target; closes `filter-enforcement.md` Open question 4]), and
+   the live cadences of
    `checkForProxySwitch`/outage timers/`enforce DNS settings`
-   (`filter-enforcement.md` Open questions 1, 3, 4).
-6. **`ce-user-file` table/DB bindings.** `api_credentials`, `pdl_info`, `user_login`,
-   `screenshot_telemetry`, `telemetry` and the request/response trace table are [INFERENCE]-bound to
-   the encrypted container; also the exact SQLCipher open sequence and any non-default settings
+   (`filter-enforcement.md` Open questions 1, 3).
+6. **`ce-user-file` table/DB bindings.** `api_credentials`, `pdl_info`, `user_login` and the
+   request/response trace table are [INFERENCE — unresolved: connector-level bindings not traced;
+   last examined `FUN_140261670` + `re/findings/13-service-ipc/service-ipc.md` §5 (which itself
+   leaves the two store connectors' identity inferred) + `re/findings/16-updater/upload-protocol.md`
+   Open items 1]; ⚠ evidence correction on two of the tables this item listed: `screenshot_telemetry`
+   is **not** in the encrypted container — it is a `ce-file` table, proved by the classifier-internals
+   pass (store ctor `FUN_14013f840` opens `ce-file`; SQL wrappers `FUN_14014c0f0`/`FUN_14014c3c0`/
+   `FUN_14014c620`; the same `view+0x3a8` connector feeds the metrics recorder —
+   `re/findings/10-classifier/classifier-internals-client.md` §3, which closes this question for that
+   table); and `telemetry` is now positively indicated in `ce-user-file` (the classifier ATTACHes
+   that container as `userdb` and ensures `userdb.telemetry` —
+   `re/findings/10-classifier/classifier-internals-classifier.md` Logging taxonomy), though the
+   comm-service `TelemetrySqliteTable` connector remains untraced; also the exact SQLCipher open
+   sequence and any non-default settings
    (`re/findings/13-service-ipc/service-ipc.md` Open questions 3, 5, 7;
    `re/findings/16-updater/upload-protocol.md` Open items 1).
 7. **Local IPC residues.** Fixed-slot queue record format while idle (length word semantics, ring vs
@@ -654,3 +699,40 @@ Exact-scope list of what the findings leave open. Items 1–3 are the pending cl
     (only removal code was found — installer DLL `CISCustomDLLApp` not in the analyzed set) and
     whether the removed IE BHO performed URL capture for `has_url_accountability` —
     `re/findings/12-network/browser-integration.md` Open questions.
+
+## Inference audit log
+
+Every original inference tag site in this document, with its verdict. Inline verdict forms:
+`[VERIFIED: <cite>]`, `[INFERENCE — unresolved: <what is missing; last examined …>]`, plus
+`⚠ evidence correction` where new evidence contradicted the tagged claim. (The header's
+`[INFERENCE — unresolved: <what is missing>]` / `[DEFERRED: …]` strings are form templates, not
+tag sites.)
+
+| # | Site | Original claim | Verdict | Evidence |
+|---|---|---|---|---|
+| 1 | §3.2 item 8 | What the proxy answers with zero signed-in users | **corrected** — fail-closed contradicted: zero-user requests take the no-filter-socket branch (`request+0x41e0 == 0`) and are answered **fail-open**, `resolution_type` 2 `UnrestrictedUnFiltered` (or 3 `UnrestrictedAlwaysAllowable` via predicate `FUN_14038d2b0`), from the user-path resolver answer | `FUN_1402ba390` decompiled this audit; code↔name map `re/findings/12-network/filter-enforcement.md` verdict-b table; closes `filter-enforcement.md` Open question 5 |
+| 2 | §3.3 item 2 | `api_credentials` bound to `ce-user-file` by elimination | **unresolved** — connector construction site still untraced (`FUN_140261670` reads it from `table+8` only); `re/findings/10-classifier/classifier-internals-client.md` §4 asserts the container without a trace; lazy table creation (now proven via `screenshot_telemetry`) keeps elimination open | last examined `FUN_140261670` + `re/findings/16-updater/upload-protocol.md` §2 + `re/findings/13-service-ipc/service-ipc.md` §5 |
+| 3 | §3.6 item 1 | Trigger of the 5,593-`ReadFile` `ce-file` scan inside the 601 s tick | **unresolved** — no new trace data landed | last examined `re/findings/03-runtime/api-trace.md` §b + `re/samples/runtime/api-trace-b-registry-tick.csv` |
+| 4 | §4.2 `ce-user-file` row | Classifier ATTACHes the container as `userdb` at startup | **verified** (annotated by the earlier audit pass) | `ce-user-file` literal + `CREATE TABLE IF NOT EXISTS userdb.telemetry …` + `Could not attach to user database (c)/(t)` strings in `VictoryShieldClassifier.exe`; `re/findings/10-classifier/classifier-internals-classifier.md` Logging taxonomy |
+| 5 | §5.2 route table | `/v1/status/time` is GET | **unresolved** — method lives behind the virtual libcurl layer; traced factory `FUN_140205ca0` → `Uri` ctor `FUN_1401d8a80` (scheme default `http` `0x1409a74d4`, no verb field) → `communicate` `FUN_14022ef50` (virtual dispatch) this audit; no `GET`/`POST` literal exists in the binary (defined-string regex `^(GET\|POST\|PUT\|HEAD)$` empty) | tracker `re/findings/16-updater/upload-protocol.md` Open question 3 |
+| 6 | §5.2 route table | `/v1/status/ping` is GET | **unresolved** — same trace as row 5 | same |
+| 7 | §5.2 route table | `/v1/desktop_client_update` is POST | **unresolved** — same trace; the classifier's `ht.dat` template for the same URL is proven POST/`NO_AUTH` but is a different caller (`re/findings/10-classifier/classifier-internals-classifier.md` §C-2) | tracker `upload-protocol.md` Open question 3 |
+| 8 | §7 version-lineage row | `VictoryShieldClassifier.exe` keeps the 10.1.1 CLI contract | **verified** — the shipped 10.1.44 binary parses `--model/--data/--cache/--version` (+ `--verbose`) cxxopts-style at `FUN_14184ff40`, exact flag-name log strings | `re/findings/10-classifier/classifier-internals-classifier.md` "CLI contract" |
+| 9 | §Open items 4 | the fail-closed claim (then tagged as inference) (zero-user answers) | **corrected** — contradicted; see row 1 | `FUN_1402ba390` decompiled this audit |
+| 10 | §Open items 5 | RFC 8484 payload encoder is GET+base64url | **verified** — encoder `FUN_14038e320` uses the URL-safe alphabet `A–Za–z0-9-_`; `sendDohRequest` `FUN_1402d7f50` concatenates it after `"?dns="` `0x1409b9db8` and truncates the emitted `.`-padding at the first `.` (unpadded base64url, RFC 8484 §4.1.1); `DnsHttpClient::async_request` `FUN_1402da150` has no verb parameter (host, port, target only) | decompiled this audit; closes `filter-enforcement.md` Open question 4 |
+| 11 | §Open items 6 | `api_credentials`, `pdl_info`, `user_login`, `screenshot_telemetry`, `telemetry`, trace table were inference-bound to `ce-user-file` | **corrected (partial)** — `screenshot_telemetry` verified as a `ce-file` table (store ctor `FUN_14013f840` opens `ce-file`; SQL wrappers `FUN_14014c0f0`/`FUN_14014c3c0`/`FUN_14014c620`; same `view+0x3a8` connector feeds the metrics recorder — `re/findings/10-classifier/classifier-internals-client.md` §3); `telemetry` positively indicated in `ce-user-file` (`userdb.telemetry` ATTACH + ensure, `classifier-internals-classifier.md`) though the comm-service `TelemetrySqliteTable` connector is untraced; `api_credentials`, `pdl_info`, `user_login`, trace table remain **unresolved** (row 2) | as cited |
+
+Cross-reference for `## Open items` 1–3 (written before the classifier-internals pass landed; not
+tag sites, recorded here for audit completeness): that pass plus
+`re/findings/10-classifier/bundle-formats.md` answer most of their scope — the complete
+classifier↔client file vocabulary (`{ss,su,pc,hr}.dat` in, `{cs,ht}.dat` out, `rr/pp/dd` state
+markers, `re4*.dat` GC-exemption tokens), all six `*.dat.enc` roles + AES-CBC keying recovered and
+verified, `nxu.dat` = `{"nextUpdate_sec":…}`, and the classifier→backend score path: a file-mediated
+request proxy — the classifier (no network stack) authors `ht.dat` request templates that
+`VictoryShield.exe` executes with its own libcurl; the captured score-batch descriptor is a POST to
+`https://eyesonapi.cvnt.net/images` with `CE_BASIC` auth (`re/findings/10-classifier/classifier-internals-client.md`
+§2/§4, `bundle-formats.md` §3); `pdl-edi` "Experimental chance" = `experimentChancePerScreenshot_pct`
+routing batches between the victory/experimental upload channels
+(`classifier-internals-classifier.md` §(d)). Still open from those items: the `doNotScore` consumer
+site, the `re4*.dat` creator, and the production values of the `/v1/member/sensor/config/pdlEdi`
+config.

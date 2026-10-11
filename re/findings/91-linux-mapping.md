@@ -13,7 +13,9 @@ Decision vocabulary:
 - **Adapt** — keep CE's design/shape, swap the platform mechanism.
 - **Skip** — CE behavior deliberately not reproduced (rationale in the notes).
 
-Synthesis-level claims that no single findings doc states are tagged `[INFERENCE]`.
+Synthesis-level claims that no single findings doc states carried inference tags; each now carries
+its verdict inline (`[VERIFIED: <cite>]`, `[INFERENCE — unresolved: <what is missing>]`,
+`⚠ evidence correction`) — full log in `## Inference audit log` at the end.
 
 ## Decision summary
 
@@ -91,14 +93,23 @@ process), `lustlessctl` (admin/diagnostics CLI).
 On-device, not service-side.**
 
 - **On-device scoring is the only design consistent with the privacy model.** CE captures
-  screenstates, scores them locally, and its uploader carries **no images and no scores — ever**
-  (`findings/16-updater/upload-protocol.md` §6: exhaustive record-key scan finds only the five
-  activity record types; no encoder, no multipart builder). Screenstates never leave the capture
-  box (`findings/10-classifier/capture-pipeline.md` §2 verdict). A service-side classifier would
-  require shipping pixels off-device and would break the activity-records-only model adopted in
-  §6 — so LustLess classifies locally. [INFERENCE: CE's backend-visible "screen accountability"
-  signal arrives via a channel outside the comm service, plausibly the classifier's templated
-  HTTP reverse channel; see Open items.]
+  screenstates, scores them locally, and its **comm-service uploader** carries **no images and no
+  scores — ever** (`findings/16-updater/upload-protocol.md` §6: exhaustive record-key scan finds
+  only the five activity record types; no encoder, no multipart builder — that verdict stands for
+  this uploader). ⚠ evidence correction (scope): score batches **do** leave the machine via the
+  classifier's file-mediated HTTP reverse channel — the classifier (which imports no socket/HTTP
+  API at all) authors `ht.dat` request templates that the client executes with its own libcurl;
+  the captured score-batch descriptor is a POST to `https://eyesonapi.cvnt.net/images` with
+  `CE_BASIC` auth, its `images[]` entries carrying `evaluationData`/`splicedResult`/`label`/
+  `image_sha1_hash`/`pHashImageHash`/`baseBlurredImage`
+  (`findings/10-classifier/classifier-internals-client.md` §2/§4;
+  `findings/10-classifier/bundle-formats.md` §3). The screenstate records (`ss.dat`) themselves
+  stay on-box. A service-side classifier would require shipping pixels off-device and would break
+  the activity-records-only model adopted in §6 — so LustLess classifies locally (decision
+  unchanged). CE's backend-visible "screen accountability" signal arrives via that channel
+  [VERIFIED: `findings/10-classifier/classifier-internals-client.md` TL;DR 1 + §4 — the "templated
+  HTTP reverse channel" is confirmed and refined: a file-mediated request proxy, classifier→
+  client→backend, entirely outside the comm service].
 - **Process shape — Adapt.** Keep a separate `lustless-classifier` supervised by the daemon,
   launched with CE's CLI contract `--model=<dir> --data=<per-user dir> --cache=<per-user dir>
   --version=… [--verbose]` (`findings/02-artifacts/classifier-data.md` "Launch contract";
@@ -113,8 +124,15 @@ On-device, not service-side.**
   manifest (roles, versions, hashes — CE's `mn`-shaped artifact), installed read-only outside
   per-user state. Encrypt at rest only if the threat model needs it; if so use an AEAD with a
   per-file nonce — CE's three `bN` shards leak a byte-identical 9,584-byte prefix because of
-  deterministic encryption (`findings/02-artifacts/enc-data.md` header analysis). Log the loaded
-  file ids at startup (CE never does, which is why that mapping is `[INFERENCE]` there).
+  deterministic encryption (`findings/02-artifacts/enc-data.md` header analysis; the scheme is
+  recovered and empirically verified as AES-CBC with hardcoded IVs,
+  `findings/10-classifier/bundle-formats.md` §1). Log the loaded file ids at startup — CE never
+  does, and the id→file mapping that was left as inference there is now recovered: the 20-hex id is the
+  first 80 bits of the SHA-512 of the shipped `.dat.enc` file, and every role is proven
+  (`b1/b2/b3` = the scoring-model shards, `sw` = Snowball NLP word data, `j1` = the JS bundle,
+  `mn` = the manifest)
+  [VERIFIED: `findings/10-classifier/bundle-formats.md` §2.1–§2.2 — ⚠ evidence correction: the
+  "mapping unrecovered" premise is superseded].
 - **Per-user state — Adapt.** Mirror CE's per-user tree
   (`findings/02-artifacts/classifier-data.md`): `cache/` for small control files (e.g. the
   `nxu.dat`-style update-schedule marker), `data/<epoch-ms>/` for fetched batches, `data/<ts>/`
@@ -125,10 +143,14 @@ On-device, not service-side.**
   experiments are ever used, persist the assignment per user and log the roll once (CE's
   `ONE-TIME NOTE: Experimental chance set to 0` — `findings/02-artifacts/classifier-data.md`),
   so support logs explain behavior.
-- **What is NOT decided here:** the scoring model itself, the plaintext format of the model
-  blobs, and the classifier→client message semantics — see Open items (classifier-internals
-  pass pending). Two negatives are already firm and shape the design: the capture client holds
-  **no** model data (string-complete negative in
+- **What is NOT decided here:** LustLess's own scoring model and its plaintext artifact format,
+  and whether to copy CE's hot-updatable JS-bundle layer (discovered by the classifier-internals
+  pass — see Open items 1). The classifier→client message semantics that were pending are now
+  answered (`findings/10-classifier/classifier-internals-client.md` §2 /
+  `findings/10-classifier/classifier-internals-classifier.md` §C-2: inbound `{ss,su,pc,hr}.dat`,
+  outbound `{cs,ht}.dat`, `rr/pp/dd` state markers), and the model-blob plaintext formats and
+  roles are recovered (`findings/10-classifier/bundle-formats.md` §2). Two negatives are already
+  firm and shape the design: the capture client holds **no** model data (string-complete negative in
   `findings/10-classifier/capture-pipeline.md` §4), and the network uploader holds **no**
   classifier outputs (`findings/16-updater/upload-protocol.md` §6) — model handling stays
   exclusively inside the classifier process.
@@ -300,10 +322,16 @@ modernized.**
   `status/ping`, `client_update` (consumed by §9). Keep the shared envelope
   `{"<recordType>": {"client": {architecture, platform, platformVersion, version}, "timestamp": …}}`
   and the `utc_datetime_created` key (§5).
-- **Privacy model — keep it; it is a feature.** CE uploads **no screenshot, thumbnail, image
-  byte, or classifier score, ever** — proven by complete record-key enumeration and the absence
-  of any encoder/multipart path in the uploader (`findings/16-updater/upload-protocol.md` §6).
-  LustLess adopts this as a stated product invariant: reports contain activity records only. If
+- **Privacy model — keep it; it is a feature.** CE's comm-service uploader carries **no
+  screenshot, thumbnail, image byte, or classifier score, ever** — proven by complete record-key
+  enumeration and the absence of any encoder/multipart path in that uploader
+  (`findings/16-updater/upload-protocol.md` §6; the verdict stands for this uploader).
+  ⚠ evidence correction (scope): CE as a whole does upload screen-derived data — classifier score
+  batches (scores, labels, hashes, and a `baseBlurredImage` field) ride the classifier's `ht.dat`
+  proxy channel to `https://eyesonapi.cvnt.net/images`, executed by the UI process outside the
+  comm service (`findings/10-classifier/classifier-internals-client.md` §4;
+  `findings/10-classifier/bundle-formats.md` §3). What LustLess adopts below is its **own,
+  stricter** invariant, unchanged by that finding: reports contain activity records only. If
   screen-derived evidence (e.g. flagged-window metadata) is ever uploaded, it becomes a
   **first-class record type in the schema with explicit consent**, not a hidden side channel
   (same doc, Linux notes) — see Open items for the pending policy decision.
@@ -509,6 +537,14 @@ becomes package ownership plus a documented toggle.**
 
 Decisions deferred, with exact scope. Nothing else in this document is pending.
 
+**Status (2026-10-11 sync — classifier-internals + bundle-formats passes landed):**
+
+- Item 1: **RESOLVED** by `findings/10-classifier/classifier-internals-classifier.md` (a: named-event wake + `ss/su/pc/hr` message folders + `rr/pp/dd` state markers; c: full message vocabulary incl. `cs`/`ht`, score batches flow through the ht.dat request proxy; d: `experimentChancePerScreenshot_pct` gates the Victory-vs-Experimental upload channel), `classifier-internals-client.md` (transport = file-mediated request proxy, `hr.dat` answers; UI "analyzed" counter counts captures), and `bundle-formats.md` (b: crypto + all six roles proven — `b1/b2/b3` = scoring-model shards, `sw` = Snowball NLP data, `j1` = JS/duktape bundle, `mn` = manifest).
+- Item 2: in progress — model selection is part of the LustLess classifier implementation (tracked in `docs/impl/CONTRACTS.md` §7).
+- Item 3: still open — verification scheduled against the Zorin/Ubuntu-family testbed (Wayland portal capture permission).
+- Item 4: **RESOLVED** — invariant ratified as the deliberately-stricter LustLess choice: no screen-derived data on ANY channel (CE's score batches leave via the ht.dat proxy per `classifier-internals-client.md`; LustLess keeps records-only everywhere). Flagged-window metadata rides CE's existing `circumventionRecord` behind `upload.circumvention_records`.
+- Item 5: still open — protocol mechanics decided (§3); shipped default = CleanBrowsing-family adult-filter endpoint pending redistribution-terms review.
+
 1. **Classifier internals (classifier-internals pass lands after this document).** Scope:
    (a) screenstate-consumption semantics — does the classifier watch ready-marker folders and
    how it treats `doNotScore` windows / `apps[]` rects; (b) plaintext formats and keying of the
@@ -517,7 +553,9 @@ Decisions deferred, with exact scope. Nothing else in this document is pending.
    tables, `su.dat`); (c) the classifier→client message types (`cs/ht/pp/dd/re4*`) and how
    scores reach the client/UI ("Analyzed… in the last N minutes");
    (d) the `pdl-edi` "Experimental chance" experiment-gating semantics. Evidence base so far:
-   `findings/10-classifier/capture-pipeline.md` §2 (partly `[INFERENCE]` file table) + §4,
+   `findings/10-classifier/capture-pipeline.md` §2 (its file table was then partly inferred;
+   the classifier-internals pass has since landed and resolves most of (a)–(d) — status in
+   `## Inference audit log`) + §4,
    `findings/02-artifacts/enc-data.md`, `findings/02-artifacts/classifier-data.md`, and the
    `findings/13-service-ipc/service-ipc.md` / `findings/16-updater/upload-protocol.md` negatives
    (no model handling in the client/uploader). **Blocks:** the final classifier→daemon record
@@ -545,3 +583,23 @@ Decisions deferred, with exact scope. Nothing else in this document is pending.
    resolver; pick the shipped default endpoint set and the `clear_browsing_level`-style level →
    endpoint mapping. Protocol mechanics (RFC 8484 dual-resolution, RPZ marker handling) are
    decided in §3 and unaffected; only the default endpoint/level table is open.
+
+## Inference audit log
+
+Every original inference tag site in this document, with its verdict. Inline verdict forms:
+`[VERIFIED: <cite>]`, `[INFERENCE — unresolved: <what is missing; last examined …>]`, plus
+`⚠ evidence correction` where new evidence contradicted or scoped the tagged claim. (The header
+line describing the tagging scheme was rewritten to this audited form; it is not a tag site.)
+
+| # | Site | Original claim | Verdict | Evidence |
+|---|---|---|---|---|
+| 1 | §2 "On-device scoring" | CE's backend-visible "screen accountability" signal arrives via a channel outside the comm service, plausibly the classifier's templated HTTP reverse channel | **verified** (+ refined) — it is a file-mediated request proxy: the classifier (no socket/pipe/HTTP import at all) authors `ht.dat` request templates, `VictoryShield.exe` executes them with its own libcurl and answers via `hr.dat`; score batches ride it to the backend | `re/findings/10-classifier/classifier-internals-client.md` TL;DR 1 + §2/§4 (Linux-mapping verdict section) |
+| 2 | §2 "Model bundles" | the loaded-file-id→file mapping was left as inference (CE never logs ids) | **corrected** — the mapping is recovered: id = first 80 bits of the SHA-512 of the shipped `.dat.enc` file; all six roles proven (`b1/b2/b3` scoring-model shards, `sw` Snowball NLP data, `j1` JS bundle, `mn` manifest); at-rest scheme recovered as AES-CBC with hardcoded IVs | `re/findings/10-classifier/bundle-formats.md` §1, §2.1–§2.2 |
+| 3 | §2 "What is NOT decided here" + Open items 1 tag ("partly inferred" file table) | classifier→client message semantics and the capture-pipeline §2 file table pending the classifier-internals pass | **corrected** — the pass landed: inbound vocabulary `{ss,su,pc,hr}.dat`, outbound `{cs,ht}.dat`, `rr/pp/dd` state markers, `re4*.dat` GC-exemption tokens, `nxu.dat` = `{"nextUpdate_sec":…}`, `experimentChancePerScreenshot_pct` = victory/experimental channel routing; still open from Open item 1: the `doNotScore` consumer site, the `re4*.dat` creator, production `/v1/member/sensor/config/pdlEdi` values | `re/findings/10-classifier/classifier-internals-client.md` §2; `re/findings/10-classifier/classifier-internals-classifier.md` §(a), §C-2, §C-4, §(d) |
+| 4 | §2 + §6 "no images and no scores — ever" (claim, not a tag) | CE never uploads classifier scores | **corrected (scope)** — true of the comm-service outbox only (`re/findings/16-updater/upload-protocol.md` §6 stands for that uploader); CE as a whole uploads score batches through the `ht.dat` proxy: captured descriptor POSTs `https://eyesonapi.cvnt.net/images` with `CE_BASIC` auth, `images[]` carrying `evaluationData`/`splicedResult`/`label`/hashes/`baseBlurredImage` | `re/findings/10-classifier/classifier-internals-client.md` §4; `re/findings/10-classifier/bundle-formats.md` §3 |
+
+Design decisions were not changed by this audit: §2/§6 keep the "classify locally" choice and the
+records-only upload invariant as LustLess's own, stricter policy — only the CE-side factual claims
+were scoped. Effect on Open items: item 1 is mostly answered (rows 2–3; remaining scope listed in
+row 3); item 4's factual basis changed (row 4) but its policy question — ratify the invariant or
+define a consent-gated screen-derived record type — remains open as written.

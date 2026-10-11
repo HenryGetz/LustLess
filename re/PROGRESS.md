@@ -9,10 +9,10 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 |---|---|---|
 | Recon | ✅ | Surface enumerated (`INVENTORY.md`); live verdicts in `findings/01-dynamic-recon/live-surface.md` (pure user-mode product) |
 | Scaffold | ✅ | `re/` layout, README, INVENTORY, this tracker |
-| Intake | 🔍 | Ghidra import + auto-analysis of 11 programs in flight |
-| StaticRE | ⬜ | Per-subsystem passes (wave B after Intake) |
-| Dynamic | 🔍 | Live recon + network capture done; Procmon API-trace pass remains (wave C) |
-| Consolidation | ⬜ | Master architecture + Linux mapping |
+| Intake | ✅ | Ghidra import + auto-analysis of 11 programs; baselines 11/11 in `findings/00-baseline/` |
+| StaticRE | ✅ | All subsystem passes + classifier-internals + bundle-formats (2026-10-11) |
+| Dynamic | ✅ | Live recon, network capture, Procmon API-trace |
+| Consolidation | ✅ | Master architecture + Linux mapping + [INFERENCE] audit closed (all tags resolved/annotated, audit logs in both docs) |
 
 ## Work items
 
@@ -74,3 +74,14 @@ Status: ✅ done · 🔍 in progress · ⬜ pending. Evidence pointers land in `
 | LinuxMappingPass | `findings/91-linux-mapping.md` | ✅ |
 | ApiTracePass | `findings/03-runtime/api-trace.md` | ✅ |
 | ArchitectureSyncPass | `findings/90-architecture.md` + `91` + `03-runtime/network-capture.md` sync | ✅ |
+| ClassifierInternalsClassifierSide | `findings/10-classifier/classifier-internals-classifier.md` | ✅ |
+| ClassifierInternalsClientSide | `findings/10-classifier/classifier-internals-client.md` | ✅ |
+| BundleFormats | `findings/10-classifier/bundle-formats.md` | ✅ |
+| InferenceAudit | `90`/`91` per-tag verdicts + `## Inference audit log` in both | ✅ |
+
+## Build phase (LustLess implementation)
+
+RE is closed. The Linux reimplementation is specified by `findings/91-linux-mapping.md`
+(decisions) and built under the contract `docs/impl/CONTRACTS.md` (crate graph, IPC, schemas,
+packaging); implementation progress is tracked by the orchestrator. Testbed:
+`packaging/testbed/` (Zorin/Ubuntu-family VMs).
