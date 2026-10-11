@@ -1,0 +1,40 @@
+[package]
+name = "lustless-capture"
+version = "0.1.0"
+edition = "2021"
+description = "LustLess screenstate capture: X11/Wayland backends, spool writer, manifest schema 3.0.0, jittered scheduler"
+license = "Apache-2.0"
+
+[dependencies]
+lustless-core = { path = "../lustless-core" }
+
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+log = "0.4.34"
+rand.workspace = true
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std", "serde"] }
+
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+# X11 backend: x11rb (pure-rust XCB bindings) incl. MIT-SHM + RandR protocol modules.
+x11rb = "0.13.2"
+# Raw libc for SysV shared memory (shmat/shmget) and mmap of the MIT-SHM fd segments.
+libc = "0.2.190"
+
+# Wayland backend: XDG desktop-portal ScreenCast + PipeWire stream consumption.
+ashpd = "0.13.13"
+pipewire = "0.10.1"
+
+# Scheduler gates: logind LockedHint/Active + screensaver state over D-Bus.
+zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "net", "sync"] }
+
+# Consumer-side spool watcher.
+inotify = "0.11.5"
+
+# Locks shared between the PipeWire loop thread and the capture thread.
+parking_lot = "0.12.5"
+
+[dev-dependencies]
+tempfile = "3.27.0"

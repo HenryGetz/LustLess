@@ -1,0 +1,137 @@
+# Zorin OS 17 Core test VM for .deb install testing.
+#
+# Notes vs the original spec:
+# - The image is "qemux/qemu" (Docker Hub). "qemux/qemu-docker" does not exist
+#   as an image; that is the name of the GitHub repo (qemus/qemu-docker).
+# - The ISO is bind-mounted to /boot.iso, which qemu-docker's findBootFile()
+#   detects; its presence makes the BOOT env var moot, so BOOT is not set.
+#   If /boot.iso is ever removed, set BOOT to any ISO URL or distro name
+#   (upstream default is "alpine").
+services:
+  zorin-vm:
+    image: qemux/qemu
+    container_name: zorin-os
+    environment:
+      RAM_SIZE: "4G"
+      CPU_CORES: "4"
+      DISK_SIZE: "32G"
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8006:8006" # Web-based VNC/noVNC viewer
+    volumes:
+      - ../../target/testbed/zorin_storage:/storage
+      # Must NOT be :ro — QEMU attaches the media via usb-storage with
+      # removable=on, which opens the file read-write; a :ro bind fails with
+      # "Could not open '/boot.iso': Read-only file system" and crashloops.
+      - ../../target/testbed/iso/Zorin-OS-17.3-Core-64-bit-r2.iso:/boot.iso
+    restart: unless-stopped
+    # Give the VM time to receive the ACPI shutdown signal before it is killed.
+    stop_grace_period: 2m
+
+  # Additional distro flavors for the .deb target matrix (see README.md).
+  # Each service sits behind its own compose profile, so a bare
+  # `docker compose up -d` still starts only zorin-vm; start a flavor with
+  # `docker compose --profile <name> up -d <service>`.
+  # Definitions mirror zorin-vm exactly (image, sizing, devices, caps,
+  # storage layout, grace period) — only the ISO, host noVNC port, container
+  # name, and storage dir differ.
+
+  zorin-lite-vm:
+    image: qemux/qemu
+    container_name: zorin-lite-os
+    profiles: ["zorin-lite"]
+    environment:
+      RAM_SIZE: "4G"
+      CPU_CORES: "4"
+      DISK_SIZE: "32G"
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8007:8006" # Web-based VNC/noVNC viewer (host port 8007)
+    volumes:
+      - ../../target/testbed/zorin_lite_storage:/storage
+      # Must NOT be :ro — QEMU attaches the media via usb-storage with
+      # removable=on; a :ro bind fails and crashloops (see zorin-vm above).
+      - ../../target/testbed/iso/Zorin-OS-17.3-Lite-64-bit-r2.iso:/boot.iso
+    restart: unless-stopped
+    # Give the VM time to receive the ACPI shutdown signal before it is killed.
+    stop_grace_period: 2m
+
+  xubuntu-vm:
+    image: qemux/qemu
+    container_name: xubuntu-os
+    profiles: ["xubuntu"]
+    environment:
+      RAM_SIZE: "4G"
+      CPU_CORES: "4"
+      DISK_SIZE: "32G"
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8008:8006" # Web-based VNC/noVNC viewer (host port 8008)
+    volumes:
+      - ../../target/testbed/xubuntu_storage:/storage
+      # Must NOT be :ro — QEMU attaches the media via usb-storage with
+      # removable=on; a :ro bind fails and crashloops (see zorin-vm above).
+      - ../../target/testbed/iso/xubuntu-24.04.5-desktop-amd64.iso:/boot.iso
+    restart: unless-stopped
+    # Give the VM time to receive the ACPI shutdown signal before it is killed.
+    stop_grace_period: 2m
+
+  ubuntu-vm:
+    image: qemux/qemu
+    container_name: ubuntu-os
+    profiles: ["ubuntu"]
+    environment:
+      RAM_SIZE: "4G"
+      CPU_CORES: "4"
+      DISK_SIZE: "32G"
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8009:8006" # Web-based VNC/noVNC viewer (host port 8009)
+    volumes:
+      - ../../target/testbed/ubuntu_storage:/storage
+      # Must NOT be :ro — QEMU attaches the media via usb-storage with
+      # removable=on; a :ro bind fails and crashloops (see zorin-vm above).
+      - ../../target/testbed/iso/ubuntu-24.04.5.1-desktop-amd64.iso:/boot.iso
+    restart: unless-stopped
+    # Give the VM time to receive the ACPI shutdown signal before it is killed.
+    stop_grace_period: 2m
+
+  lubuntu-vm:
+    image: qemux/qemu
+    container_name: lubuntu-os
+    profiles: ["lubuntu"]
+    environment:
+      RAM_SIZE: "4G"
+      CPU_CORES: "4"
+      DISK_SIZE: "32G"
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8010:8006" # Web-based VNC/noVNC viewer (host port 8010)
+    volumes:
+      - ../../target/testbed/lubuntu_storage:/storage
+      # Must NOT be :ro — QEMU attaches the media via usb-storage with
+      # removable=on; a :ro bind fails and crashloops (see zorin-vm above).
+      - ../../target/testbed/iso/lubuntu-24.04.5-desktop-amd64.iso:/boot.iso
+    restart: unless-stopped
+    # Give the VM time to receive the ACPI shutdown signal before it is killed.
+    stop_grace_period: 2m

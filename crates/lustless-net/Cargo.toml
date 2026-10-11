@@ -1,0 +1,38 @@
+[package]
+name = "lustless-net"
+version = "0.1.0"
+edition = "2021"
+description = "Network services: REST uploader (outbox state machine), updater (signed feed), dashboard (axum) — docs/impl/CONTRACTS.md §10/§12/§13"
+license = "Apache-2.0"
+
+[dependencies]
+lustless-core = { path = "../lustless-core" }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+rand.workspace = true
+
+# Short-lock mutexes for this crate's own shared state (token store, audit
+# ring); guards are never held across .await (project rule: parking_lot over
+# std::sync for immediately-consumed locks). The outbox/clock locks stay
+# std::sync because their type is pinned by the §3 daemon-facing API.
+parking_lot = "=0.12.5"
+# RFC 3339 parsing for the `/v1/status/time` server-time response (§10 clock
+# anchor); formatting/local-offset already come from the workspace pin.
+time = { workspace = true, features = ["parsing"] }
+
+# HTTP stack (CONTRACTS §2 family "reqwest + rustls"): the uploader, updater
+# and clock-anchor exchanges. `pool_max_idle_per_host(0)` implements §10's
+# "fresh TCP connect per exchange" (CE rotates ~301 s connections); rustls
+# only, no OpenSSL/native-TLS dependency.
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls"] }
+
+# Dashboard HTTP server (§13: embedded axum on 127.0.0.1, token auth).
+axum = "=0.8.9"
+
+# Update-feed signature verification (§12: ed25519, pubkey pinned in
+# /etc/lustless/lustless.toml; CE shipped DSA but never configured a key —
+# that lesson is the requirement here).
+ed25519-dalek = "=3.0.0"
+base64 = "=0.22.1"

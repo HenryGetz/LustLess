@@ -1,0 +1,31 @@
+[package]
+name = "lustless-dns"
+version = "0.1.0"
+edition = "2021"
+description = "LustLess DNS forwarder engine: dual DoH/user resolution, CE 15-code verdicts, block synthesis, per-process attribution, filter health machine (docs/impl/CONTRACTS.md §8)"
+license = "Apache-2.0"
+
+[dependencies]
+tokio = { workspace = true }
+thiserror.workspace = true
+tracing.workspace = true
+time.workspace = true
+
+# DNS wire codec (CONTRACTS §2 family "hickory-proto"; §8 block synthesis and
+# query parsing). Pinned exactly per §2.
+hickory-proto = "=0.25.2"
+
+# DoH transport (CONTRACTS §2 family "reqwest+rustls"): RFC 8484 GET over
+# rustls TLS, HTTP/2 ALPN preferred with HTTP/1.1 fallback — see src/doh.rs for
+# the stack rationale. rustls-tls only; no OpenSSL/native-TLS dependency.
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "http2"] }
+
+# inet_diag (SOCK_DIAG netlink) UDP-socket-owner attribution (§8), via raw
+# netlink syscalls — no extra netlink-crate dependency.
+libc = "=0.2.190"
+
+# Short-lock mutexes for shared engine state (health machine, attribution
+# cache, filter state); guards are never held across .await, so a plain
+# parking_lot lock is the right tool (project rule: parking_lot over
+# std::sync for immediately-consumed locks).
+parking_lot = "=0.12.5"

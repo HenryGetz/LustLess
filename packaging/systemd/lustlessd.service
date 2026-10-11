@@ -1,0 +1,55 @@
+# LustLess system daemon — CONTRACTS §4 (layout), §11 (watchdog semantics).
+#
+# Hardening note: this unit is deliberately only moderately hardened so the
+# daemon can still (a) bind its DNS listener on 127.0.0.2:53 (§8), (b) spawn
+# and supervise lustless-classifier (§7), (c) capture screens over X11 XShm /
+# Wayland portal, (d) attribute DNS queries via SOCK_DIAG netlink + /proc/*/fd
+# (§8), and (e) write /var/lib/lustless (§4). Do NOT add without re-testing:
+#   PrivateTmp / PrivateDevices  — hide the X11 socket and /dev/shm XShm
+#                                  segments from the capture backends
+#   IPAddressDeny=any            — breaks the loopback DNS listener and
+#                                  DoH/upload egress
+#   ProcSubset= / ProtectProc=   — breaks /proc/*/fd query attribution
+#   MemoryDenyWriteExecute=true  — the ONNX scoring runtime may map
+#                                  generated code
+#   ProtectHome=true             — unverified capture/auth paths into
+#                                  /home (X11 authority files)
+
+[Unit]
+Description=LustLess accountability daemon (screen accountability + DNS filtering)
+Documentation=file:///etc/lustless/lustless.toml
+After=network-online.target
+Wants=network-online.target
+# CE's 3-restarts-in-10s crash budget (CONTRACTS §11).
+StartLimitIntervalSec=10
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/lustlessd
+Restart=on-failure
+RestartSec=1
+RuntimeDirectory=lustless
+RuntimeDirectoryMode=0755
+UMask=0027
+
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+# AF_UNIX: IPC socket, X11, D-Bus (logind), journald; AF_INET/AF_INET6: DNS
+# listener, DoH + upload egress, dashboard bind; AF_NETLINK: SOCK_DIAG
+# per-query process attribution.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

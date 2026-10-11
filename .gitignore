@@ -1,3 +1,8 @@
 re/samples/*
 !re/samples/MANIFEST.sha256
 !re/samples/README.md
+
+# Testbed VM data (ISO + disk images under target/; never committed)
+target/
+uwp_str.txt
+vs_str.txt

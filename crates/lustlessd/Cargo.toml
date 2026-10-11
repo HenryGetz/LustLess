@@ -1,0 +1,56 @@
+[package]
+name = "lustlessd"
+version = "0.1.0"
+edition = "2021"
+description = "LustLess system daemon: IPC server, session/policy state machine, capture loop + classifier supervision, DNS lifecycle (docs/impl/CONTRACTS.md §4–§14)"
+license = "Apache-2.0"
+
+[[bin]]
+name = "lustlessd"
+path = "src/main.rs"
+
+[dependencies]
+lustless-core = { path = "../lustless-core" }
+lustless-capture = { path = "../lustless-capture" }
+lustless-dns = { path = "../lustless-dns" }
+lustless-net = { path = "../lustless-net" }
+
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+rand.workspace = true
+time.workspace = true
+rusqlite.workspace = true
+
+# IPC peer credentials (`SO_PEERCRED` via `nix::sys::socket`, CONTRACTS §5) plus
+# the OS-user lookup used for the `logins` rows (`system_user_name`, §6.1).
+nix = { version = "=0.30.1", features = ["socket", "user"] }
+
+# logind session tracking (§13 session gating) and polkit `CheckAuthorization`
+# for BREAK_GLASS (§5, 0x68) over the system bus.
+zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
+
+# zbus signal/property streams implement `futures::Stream`; sessions.rs selects
+# over them (`StreamExt::next`).
+futures = "=0.3.34"
+
+# Logging (§14): journald via tracing-journald with a stderr fallback, plus the
+# `log` -> `tracing` bridge for lustless-capture's `log::` calls.
+tracing-subscriber = "=0.3.23"
+tracing-journald = "0.3"
+tracing-log = "=0.2.0"
+
+# Sign-in (§5 0x65 / §10) and update check (§12 / §10
+# `/v1/desktop_client_update`) are synchronous `Control` methods, so the
+# blocking reqwest client (rustls only, no OpenSSL).
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "blocking", "json"] }
+
+# Support bundle (§5 0x43): gzip-compressed tar at
+# `/var/lib/lustless/diagnostics-<ts>.tar.gz`.
+flate2 = "=1.1.10"
+tar = "0.4"
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -1,0 +1,42 @@
+# LustLess Cargo workspace (CONTRACTS §2/§3). Owned jointly; append-only after creation.
+[workspace]
+resolver = "2"
+members = [
+    "crates/lustless-core",
+    "crates/lustless-capture",
+    "crates/lustless-classifier",
+    "crates/lustless-dns",
+    "crates/lustlessd",
+    "crates/lustless-net",
+    "crates/lustless-agent",
+    "crates/lustlessctl",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+# Exact version pins (CONTRACTS §2: "pin exact versions in Cargo.toml").
+#
+# rusqlite is pinned with the `bundled-sqlcipher` feature for the whole workspace:
+# SQLCipher 4 is compiled into the binary so the keyed settings DB (§6.2) and the
+# plaintext outbox DB (§6.1, opened without a key) share one SQLite runtime. The
+# rationale and its consequences are documented on
+# `lustless_core::settings::SettingsDb`.
+[workspace.dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+toml = "=0.8.23"
+rusqlite = { version = "=0.37.0", features = ["bundled-sqlcipher"] }
+tokio = { version = "=1.53.2", features = ["full"] }
+thiserror = "=2.0.21"
+tracing = "=0.1.44"
+sha2 = "=0.10.9"
+rand = "=0.8.8"
+time = { version = "=0.3.55", features = ["formatting", "local-offset", "macros"] }
+
+# Release profile: thin LTO + stripped binaries (CONTRACTS §2 builds release
+# in the ubuntu:22.04 container against glibc 2.35).
+[profile.release]
+lto = "thin"
+strip = true

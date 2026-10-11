@@ -1,0 +1,26 @@
+Package: lustless
+Version: 0.1.0
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: LustLess Maintainers <maintainers@lustless.invalid>
+Depends: libgtk-3-0, libayatana-appindicator3-1, libsqlcipher1, libsecret-1-0, systemd, policykit-1, dbus, iproute2, sqlite3, ca-certificates
+Recommends: xfce4-indicator-plugin
+Suggests: gnome-shell-extension-appindicator
+Description: Accountability client: screen accountability + DNS filtering (Linux edition)
+ Clean-room Linux reimplementation of the Covenant Eyes "Victory Shield" 10.1.44
+ behavior surface. Provides on-device screen accountability (capture plus a
+ local classifier process — screenshot data never leaves the device),
+ DNS-level web filtering with per-query verdicts via a local forwarder on
+ 127.0.0.2:53, a token-authenticated local dashboard, and a single
+ polkit-gated, journald-audited administrative escape hatch.
+ .
+ This package ships the lustlessd system daemon, the lustless-classifier
+ scoring process, the lustless-agent GTK tray helper, and the lustlessctl
+ CLI. Supported desktop flavors: Zorin OS Lite 17 (Xfce), Zorin OS 17 Core
+ (GNOME), Xubuntu 24.04 (Xfce), Ubuntu 24.04 (GNOME), and Lubuntu 24.04
+ (LXQt), plus generic systemd Linux desktops. The tray needs an SNI host:
+ xfce4-indicator-plugin on Xfce (Recommends), the AppIndicator GNOME
+ extension on GNOME (Suggests; preinstalled-enabled on Ubuntu, declared for
+ minimal GNOME installs), and none on LXQt, where the agent degrades to
+ notifications with lustlessctl status and the local dashboard.

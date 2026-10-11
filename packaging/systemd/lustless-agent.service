@@ -1,0 +1,19 @@
+# LustLess per-session tray agent — CONTRACTS §4 (layout), §11 (user unit),
+# §13 (GTK tray + embedded dashboard launcher). Runs as the session user;
+# installed to /usr/lib/systemd/user/, enabled per user with:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now lustless-agent.service
+
+[Unit]
+Description=LustLess tray agent (status icon + dashboard launcher)
+Documentation=file:///etc/lustless/lustless.toml
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/lustless-agent
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

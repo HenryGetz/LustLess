@@ -1,0 +1,123 @@
+#!/bin/sh
+# lustless maintainer script — postrm (CONTRACTS §11, §15).
+#
+#   remove : systemd unit files are gone — daemon-reload so systemd forgets
+#            them. Config/DNS/policies were already reversed by prerm.
+#   purge  : verify the DNS configuration was restored (repairing leftovers
+#            from the backups if a previous step crashed), move
+#            /var/lib/lustless to a PreviousConfiguration backup, remove the
+#            polkit action and classifier logs, daemon-reload.
+#
+# PreviousConfiguration keep/remove choice: Debian policy expects purge to
+# remove everything the package created. We deliberately deviate for the
+# daemon STATE only: /var/lib/lustless is renamed out of its live path to
+# /var/lib/lustless-PreviousConfiguration (or a timestamped sibling if one
+# already exists) and kept, because an accountability deployment may need
+# the local record (login/outbox rows, circumventions) for audit/export after
+# removal. The package leaves no functional footprint; an admin completes
+# the purge with: rm -rf /var/lib/lustless-PreviousConfiguration
+set -e
+
+PREV_DIR=/var/lib/lustless/previous-config
+STATE_DIR=/var/lib/lustless
+POLKIT_DST=/usr/share/polkit-1/actions/org.lustless.policy
+RESOLVED_DROPIN=/etc/systemd/resolved.conf.d/lustless.conf
+NM_DISPATCHER=/etc/NetworkManager/dispatcher.d/90-lustless-dns
+
+log() { echo "lustless: $*" >&2; }
+
+# Inverse of postinst's backup_resolv_conf.
+restore_resolv_conf() {
+    rc=/etc/resolv.conf
+    if [ -f "$PREV_DIR/resolv.conf.link" ]; then
+        target=$(cat "$PREV_DIR/resolv.conf.link")
+        rm -f "$rc"
+        ln -s "$target" "$rc"
+        rm -f "$PREV_DIR/resolv.conf.link"
+    elif [ -f "$PREV_DIR/resolv.conf.file" ]; then
+        rm -f "$rc"
+        cp -p "$PREV_DIR/resolv.conf.file" "$rc"
+        rm -f "$PREV_DIR/resolv.conf.file"
+    else
+        rm -f "$rc"
+    fi
+    rm -f "$PREV_DIR/resolv.conf.absent"
+}
+
+# Safety net for crashed/forced removals: prerm normally restored everything
+# already; this removes leftover LustLess-owned redirect artifacts, restores
+# from backups if they are still present, and verifies no resolver config
+# still points at the (now removed) forwarder.
+verify_dns_restored() {
+    if [ -e "$RESOLVED_DROPIN" ]; then
+        rm -f "$RESOLVED_DROPIN"
+        log "removed leftover $RESOLVED_DROPIN"
+        if command -v systemctl >/dev/null 2>&1 \
+            && systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+            systemctl restart systemd-resolved || true
+            resolvectl flush-caches 2>/dev/null || true
+        fi
+    fi
+    if [ -e "$NM_DISPATCHER" ]; then
+        rm -f "$NM_DISPATCHER"
+        log "removed leftover $NM_DISPATCHER"
+    fi
+    if [ -f "$PREV_DIR/resolved-dropin.orig" ]; then
+        mv "$PREV_DIR/resolved-dropin.orig" "$RESOLVED_DROPIN"
+    fi
+    if [ -f "$PREV_DIR/resolv.conf.file" ] || [ -f "$PREV_DIR/resolv.conf.link" ]; then
+        restore_resolv_conf
+    fi
+    rm -f "$PREV_DIR/resolv.conf.absent"
+    if [ -f /etc/resolv.conf ] \
+        && grep -q '^nameserver 127\.0\.0\.2$' /etc/resolv.conf; then
+        log "WARNING: /etc/resolv.conf still points at 127.0.0.2 and no backup was available; restore your resolver configuration manually."
+    else
+        log "DNS configuration verified restored"
+    fi
+}
+
+purge_state() {
+    if [ -d "$STATE_DIR" ]; then
+        backup=/var/lib/lustless-PreviousConfiguration
+        if [ -e "$backup" ]; then
+            backup=$backup-$(date -u +%Y%m%dT%H%M%SZ)
+        fi
+        mv "$STATE_DIR" "$backup"
+        log "state kept at $backup (Debian policy deviation, documented; remove with: rm -rf $backup)"
+    fi
+}
+
+case "${1:-}" in
+    remove)
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+        ;;
+    purge)
+        verify_dns_restored
+        # Polkit action: postinst-installed (not a dpkg payload file), so
+        # purge must remove it; restore a replaced original if one exists.
+        # (Must run before purge_state moves the backup tree away.)
+        if [ -f "$PREV_DIR/polkit-action.orig" ]; then
+            mv "$PREV_DIR/polkit-action.orig" "$POLKIT_DST"
+            chmod 0644 "$POLKIT_DST" 2>/dev/null || true
+        else
+            rm -f "$POLKIT_DST"
+        fi
+        purge_state
+        rm -rf /var/log/lustless
+        rmdir /etc/lustless 2>/dev/null || true
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+        ;;
+    abort-install|abort-upgrade|failed-upgrade|disappear)
+        ;;
+    *)
+        log "postrm called with unknown argument '${1:-}'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

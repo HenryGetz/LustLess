@@ -1,0 +1,50 @@
+[package]
+name = "lustless-classifier"
+version = "0.1.0"
+edition = "2021"
+description = "LustLess screenstate classifier: spool consumer, ONNX scoring engine, bundle manager"
+license = "Apache-2.0"
+
+[[bin]]
+name = "lustless-classifier"
+path = "src/main.rs"
+
+[dependencies]
+lustless-core = { path = "../lustless-core" }
+lustless-capture = { path = "../lustless-capture" }
+
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+
+# ONNX Runtime bindings (scoring engine, CONTRACTS §7). Explicit feature list =
+# ort's defaults with `tls-native` swapped for `tls-rustls`: the build-time
+# download of the prebuilt ONNX Runtime 1.28 binaries (ort-sys
+# `download-binaries`) then runs over ring/rustls, so no system OpenSSL is
+# needed on the build host (CONTRACTS §2 prefers the rustls family).
+# Linkage: ort-sys links the downloaded ONNX Runtime *statically*
+# (`cargo:rustc-link-lib=static=onnxruntime`) unless ORT_PREFER_DYNAMIC_LINK is
+# set, so the shipped binary needs no libonnxruntime.so at runtime — see
+# MODEL.md "Runtime".
+ort = { version = "=2.0.0-rc.13", default-features = false, features = [
+    "std",
+    "ndarray",
+    "tracing",
+    "download-binaries",
+    "tls-rustls",
+    "copy-dylibs",
+    "api-27",
+] }
+
+# PNG decoding of the spool images + crops for the scorer.
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+# SIGTERM/SIGINT handler for the supervision lifecycle (CONTRACTS §7).
+libc = "0.2.190"
+
+# `<pid>.log` timestamps + protocol `ts` stamps (CONTRACTS §14).
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

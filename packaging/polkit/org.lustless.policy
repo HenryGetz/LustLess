@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+<policyconfig>
+  <vendor>LustLess</vendor>
+
+  <!--
+    One documented, polkit-gated, audited escape hatch (CONTRACTS §11):
+    there are no hidden disarm exports and no process-level anti-kill.
+    Both actions require interactive admin authentication (auth_admin_keep)
+    and every use is written to the system journal by lustlessd
+    (journald unit "lustlessd.service", tagged with the action id below)
+    before any effect is applied (IPC 0x68 BREAK_GLASS, CONTRACTS §5).
+  -->
+
+  <action id="org.lustless.break-glass">
+    <description>Temporarily override LustLess web filtering (break-glass)</description>
+    <message>Administrator authentication is required to temporarily override LustLess web filtering. Every use is audited in the system journal: journald unit "lustlessd.service", entry tagged "org.lustless.break-glass".</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/lustlessctl</annotate>
+  </action>
+
+  <action id="org.lustless.disable-protection">
+    <description>Disable LustLess protection (audited tamper/uninstall action)</description>
+    <message>Administrator authentication is required to disable LustLess protection. This is the single documented tamper/uninstall action (CONTRACTS §11); every use is audited in the system journal: journald unit "lustlessd.service", entry tagged "org.lustless.disable-protection".</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/lustlessctl</annotate>
+  </action>
+
+</policyconfig>

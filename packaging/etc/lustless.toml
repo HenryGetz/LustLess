@@ -1,0 +1,61 @@
+# LustLess system configuration — CONTRACTS §9.1 sample, installed as the
+# conffile /etc/lustless/lustless.toml (0644, root-owned).
+# Every key is documented here; names match their effect (no inverted flags).
+# Unknown keys are ignored with a warning; parse failures fall back to these
+# defaults and log `config parse failed: <err>`.
+
+[daemon]
+socket_path = "/run/lustless/lustlessd.sock"
+dashboard_enabled = true
+dashboard_port = 8760
+state_dir = "/var/lib/lustless"
+
+[dns]
+enabled = true
+listen = "127.0.0.2:53"
+doh_url = "https://dns.cleanbrowsing.org/doh/adult-filter"   # filter path (RFC 8484)
+user_resolvers = ["system"]        # "system" = read current upstream resolvers
+block_page = true
+block_page_host = "blocked.lustless.local"
+fail_closed_when_signed_out = true # "signed out ⇒ web blocked" product semantic
+pool_size = 5                      # DoH connections per endpoint
+
+[capture]
+enabled = true
+# `backend = "auto"` selection (CONTRACTS §7) across the supported flavor
+# matrix:
+#   - X11 sessions — the normal case on Zorin OS Lite 17, Xubuntu 24.04 and
+#     Lubuntu 24.04 (Xfce/LXQt always log in on X11; Zorin Lite included) —
+#     auto picks the X11 backend (XShmGetImage per RandR output), keyed off
+#     XDG_SESSION_TYPE=x11.
+#   - Wayland sessions — possible on the GNOME flavors (Ubuntu 24.04 logs in
+#     on Wayland by default; Zorin OS 17 Core may too) — auto picks the
+#     Wayland backend (ScreenCast portal over PipeWire) when
+#     XDG_SESSION_TYPE is not x11. The portal prompts once per session;
+#     restricted/protected windows are captured and flagged, never aborted.
+# Force a backend with "x11" or "wayland" only when auto picks wrong for a
+# nonstandard session; "auto" is correct for every supported flavor.
+backend = "auto"                   # auto | x11 | wayland
+interval_sec = 30
+variance_pct = 20                  # jitter ±%
+spool_dir = "/var/lib/lustless/spool"
+
+[classifier]
+enabled = true
+bin = "/usr/bin/lustless-classifier"
+model_dir = "/usr/share/lustless/models"
+
+[upload]
+base_url = "https://api.lustless.invalid"   # deployment-specific
+batch_size = 100
+heartbeat_sec = 600                # local bookkeeping tick (CE 600 s)
+retry_sec = 60
+circumvention_records = true       # upload CE's circumventionRecord vocabulary
+logs_store = false                 # support event log behind debug toggle
+
+[update]
+feed_url = ""                      # empty = updater disabled
+pubkey = ""                        # ed25519 (base64) — REQUIRED when feed_url set
+check_sec = 86400
+disable_silent_upgrade = false
+host_allowlist = ["packages.lustless.invalid"]
