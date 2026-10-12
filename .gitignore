@@ -4,5 +4,8 @@ re/samples/*
 
 # Testbed VM data (ISO + disk images under target/; never committed)
 target/
+
+# Built packages (rebuildable via packaging/build-deb.sh)
+*.deb
 uwp_str.txt
 vs_str.txt

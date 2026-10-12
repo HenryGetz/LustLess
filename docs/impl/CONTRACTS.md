@@ -440,8 +440,10 @@ Upgrade transaction order = §11 uninstall order, ending in a version-encoded st
 ## 15. Packaging (`packaging/`)
 
 - `packaging/debian/` → single binary package `lustless`, architecture `amd64`, Depends:
-  `libgtk-3-0`, `libayatana-appindicator3-1`, `libsqlcipher1`, `libsecret-1-0`,
-  `systemd`, `policykit-1`, `dbus`, `iproute2`, `sqlite3`, `ca-certificates`.
+  `libssl3, libgtk-3-0, libayatana-appindicator3-1, systemd, policykit-1, dbus,
+  ca-certificates` (verified against the shipped binaries' `ldd` output — SQLCipher is
+  compiled in via rusqlite `bundled-sqlcipher`, so no system SQLCipher; `libsecret` and
+  `sqlite3` are Suggests, not links).
 - `postinst`: create `lustless` state dir + `lustless` system user NOT needed (daemon runs
   root) → instead: `adduser`-free; enable+start `lustlessd.service`; install DNS redirect
   drop-in (resolved/NetworkManager) pointing system DNS at `127.0.0.2`; install browser

@@ -146,7 +146,10 @@ fn wrap(record_type: RecordType, ctx: &RecordContext<'_>, fields: Map<String, Va
     let mut inner = Map::new();
     inner.insert("client".into(), ctx.client.to_json());
     inner.insert("timestamp".into(), json!(ctx.timestamp));
-    inner.insert("utc_datetime_created".into(), json!(ctx.utc_datetime_created));
+    inner.insert(
+        "utc_datetime_created".into(),
+        json!(ctx.utc_datetime_created),
+    );
     inner.extend(fields);
     let mut outer = Map::new();
     outer.insert(record_type.as_str().into(), Value::Object(inner));
@@ -449,7 +452,10 @@ mod tests {
         assert_eq!(inner["interruption_type"], json!("pdl_transaction_removed"));
         assert_eq!(inner["app_name"], json!("evilapp"));
         assert_eq!(inner["app_window_title"], json!("Secret"));
-        assert_eq!(inner["device_id"], json!("0123456789abcdef0123456789abcdef"));
+        assert_eq!(
+            inner["device_id"],
+            json!("0123456789abcdef0123456789abcdef")
+        );
         assert_eq!(inner["timezone_offset"], json!("-05:00"));
     }
 

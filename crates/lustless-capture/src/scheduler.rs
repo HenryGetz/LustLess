@@ -175,9 +175,7 @@ impl Gates {
         let session = match zbus::Connection::session().await {
             Ok(conn) => Some(conn),
             Err(e) => {
-                log::warn!(
-                    "capture: session bus unavailable, screensaver gate disabled: {e}"
-                );
+                log::warn!("capture: session bus unavailable, screensaver gate disabled: {e}");
                 None
             }
         };
@@ -269,7 +267,7 @@ impl Gates {
         Ok(None)
     }
 
-    async fn session_proxy(&self, path: &str) -> Result<Option<Proxy<'_>>, GateError> {
+    async fn session_proxy<'a>(&self, path: &'a str) -> Result<Option<Proxy<'a>>, GateError> {
         Ok(Some(
             Proxy::new(
                 &self.system,
@@ -302,8 +300,8 @@ impl Gates {
                 .deserialize::<bool>()
                 .map_err(|e| GateError::SessionBus(format!("screensaver GetActive decode: {e}"))),
             Err(zbus::Error::MethodError(name, _, _))
-                if name.as_deref() == Some("org.freedesktop.DBus.Error.ServiceUnknown")
-                    || name.as_deref() == Some("org.freedesktop.DBus.Error.UnknownMethod") =>
+                if name.as_str() == "org.freedesktop.DBus.Error.ServiceUnknown"
+                    || name.as_str() == "org.freedesktop.DBus.Error.UnknownMethod" =>
             {
                 log::debug!("capture: no screensaver service on the session bus");
                 Ok(false)
@@ -334,8 +332,13 @@ mod tests {
             min = min.min(delay);
             max = max.max(delay);
         }
-        // A uniform draw over 2 000 samples must actually spread (not clamp to a bound).
-        assert!(max - min > Duration::from_secs(20), "spread was {min:?}..{max:?}");
+        // Sanity (deterministic under the fixed seed): the draws actually spread instead of
+        // clamping to one bound. The spread can never exceed the formula range
+        // `high - low` = 12 s, so a >20 s spread would contradict CONTRACTS §7's bounds.
+        assert!(
+            max - min > high - low - Duration::from_secs(2),
+            "spread was {min:?}..{max:?}"
+        );
     }
 
     #[test]
@@ -343,7 +346,10 @@ mod tests {
         let scheduler = Scheduler::new(40, 0.0);
         let mut rng = StdRng::seed_from_u64(1);
         for _ in 0..16 {
-            assert_eq!(scheduler.steady_delay_with(&mut rng), Duration::from_secs(40));
+            assert_eq!(
+                scheduler.steady_delay_with(&mut rng),
+                Duration::from_secs(40)
+            );
         }
     }
 

@@ -19,7 +19,7 @@
 //! drains the per-connection queue (or replies with an empty frame).
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{json, Map, Value};
@@ -67,6 +67,7 @@ pub struct PeerCred {
 }
 
 /// Result of [`read_frame`].
+#[derive(Debug)]
 enum ReadFrame {
     /// A known §5 code with payload.
     Known(Frame),
@@ -146,12 +147,12 @@ pub async fn serve(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(
-            &socket_path,
-            std::fs::Permissions::from_mode(0o666),
-        );
+        let _ = std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o666));
     }
-    tracing::info!("ipc: listening on {} (mode 0666, §5)", socket_path.display());
+    tracing::info!(
+        "ipc: listening on {} (mode 0666, §5)",
+        socket_path.display()
+    );
 
     loop {
         tokio::select! {
@@ -257,7 +258,7 @@ async fn conn_loop(
 async fn read_frame(stream: &mut UnixStream) -> std::io::Result<Option<ReadFrame>> {
     let mut header = [0u8; FRAME_HEADER_LEN];
     match stream.read_exact(&mut header).await {
-        Ok(()) => {}
+        Ok(_) => {}
         Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
         Err(err) => return Err(err),
     }
@@ -271,7 +272,7 @@ async fn read_frame(stream: &mut UnixStream) -> std::io::Result<Option<ReadFrame
     let mut buffer = vec![0u8; FRAME_HEADER_LEN + payload_len];
     buffer[..FRAME_HEADER_LEN].copy_from_slice(&header);
     match stream.read_exact(&mut buffer[FRAME_HEADER_LEN..]).await {
-        Ok(()) => {}
+        Ok(_) => {}
         Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
         Err(err) => return Err(err),
     }
@@ -375,11 +376,7 @@ fn readback_for_username(
     )
     .map_err(|err| err.to_string())?;
     let mut stmt = conn.prepare(QUERY).map_err(|err| err.to_string())?;
-    let names: Vec<String> = stmt
-        .column_names()
-        .into_iter()
-        .map(String::from)
-        .collect();
+    let names: Vec<String> = stmt.column_names().into_iter().map(String::from).collect();
     let rows = stmt
         .query_map(rusqlite::params![username, limit], |row| {
             let mut map = Map::new();
@@ -396,7 +393,8 @@ fn readback_for_username(
             Ok(Value::Object(map))
         })
         .map_err(|err| err.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|err| err.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| err.to_string())
 }
 
 /// Keeps a rows reply inside §5's 64 KiB frame by dropping the oldest rows
@@ -555,14 +553,20 @@ pub(crate) async fn dispatch(
                     "expected {\"key\",\"value\"}",
                 ));
             };
-            let (Some(key), Some(value)) = (object.get("key").and_then(Value::as_str), object.get("value")) else {
+            let (Some(key), Some(value)) = (
+                object.get("key").and_then(Value::as_str),
+                object.get("value"),
+            ) else {
                 return DispatchOutcome::reply(error_reply(
                     "invalid_payload",
                     "expected {\"key\",\"value\"}",
                 ));
             };
             if value.is_null() {
-                return DispatchOutcome::reply(error_reply("invalid_payload", "value may not be null"));
+                return DispatchOutcome::reply(error_reply(
+                    "invalid_payload",
+                    "value may not be null",
+                ));
             }
             match state.set_client_config(key, value) {
                 Ok(()) => DispatchOutcome::reply(json!({ "ok": true, "key": key })),
@@ -605,8 +609,8 @@ pub(crate) async fn dispatch(
 
         // 0x60 — §9 snapshot scoped to the peer (§5: own uid only).
         Code::PolicyGet => {
-            let snapshot = serde_json::to_value(state.snapshot_for(cred.uid))
-                .unwrap_or_else(|_| json!({}));
+            let snapshot =
+                serde_json::to_value(state.snapshot_for(cred.uid)).unwrap_or_else(|_| json!({}));
             DispatchOutcome::reply(json!({ "ok": true, "policy": snapshot }))
         }
 
@@ -640,18 +644,16 @@ pub(crate) async fn dispatch(
                 Err(_) => DispatchOutcome::reply(
                     json!({ "ok": true, "rows": Vec::<Value>::new(), "scope": "self" }),
                 ),
-                Ok((_uid, username)) => match readback_for_username(
-                    state.outbox_path(),
-                    &username,
-                    limit,
-                ) {
-                    Ok(rows) => {
-                        let mut reply = fit_rows_reply(rows);
-                        reply["scope"] = json!("self");
-                        DispatchOutcome::reply(reply)
+                Ok((_uid, username)) => {
+                    match readback_for_username(state.outbox_path(), &username, limit) {
+                        Ok(rows) => {
+                            let mut reply = fit_rows_reply(rows);
+                            reply["scope"] = json!("self");
+                            DispatchOutcome::reply(reply)
+                        }
+                        Err(err) => DispatchOutcome::reply(error_reply("query", err)),
                     }
-                    Err(err) => DispatchOutcome::reply(error_reply("query", err)),
-                },
+                }
             }
         }
 
@@ -661,7 +663,10 @@ pub(crate) async fn dispatch(
                 return DispatchOutcome::reply(error_reply("filter_level", err));
             }
             let Some(level) = payload.get("level").and_then(Value::as_str) else {
-                return DispatchOutcome::reply(error_reply("invalid_payload", "expected {\"level\"}"));
+                return DispatchOutcome::reply(error_reply(
+                    "invalid_payload",
+                    "expected {\"level\"}",
+                ));
             };
             let state = Arc::clone(state);
             let level = level.to_string();
@@ -772,10 +777,16 @@ pub(crate) async fn dispatch(
         // 0x68 — root-only + polkit (§5) + journald audit + fail-open flag.
         Code::BreakGlass => {
             let Some(reason) = payload.get("reason").and_then(Value::as_str) else {
-                return DispatchOutcome::reply(error_reply("invalid_payload", "expected {\"reason\"}"));
+                return DispatchOutcome::reply(error_reply(
+                    "invalid_payload",
+                    "expected {\"reason\"}",
+                ));
             };
             if reason.trim().is_empty() {
-                return DispatchOutcome::reply(error_reply("invalid_payload", "reason may not be empty"));
+                return DispatchOutcome::reply(error_reply(
+                    "invalid_payload",
+                    "reason may not be empty",
+                ));
             }
             if !polkit_authorized(cred.pid).await {
                 return DispatchOutcome::reply(error_reply(
@@ -900,7 +911,14 @@ mod tests {
         assert_eq!(reply["ok"], true, "QUIT for root");
         assert!(outcome.quit);
 
-        let outcome = dispatch(state, cred(0), 0, frame(Code::FlushOutbox, json!({})), &queue).await;
+        let outcome = dispatch(
+            state,
+            cred(0),
+            0,
+            frame(Code::FlushOutbox, json!({})),
+            &queue,
+        )
+        .await;
         let reply = outcome.reply.expect("reply");
         // Authorized, but the test has no running NetServices: an ordinary
         // handler error, not an authorization failure.
@@ -917,15 +935,36 @@ mod tests {
         let state = &ts.state;
         let (id, queue) = queue_of(state);
 
-        let outcome = dispatch(state, cred(1000), 2000, frame(Code::PolicyGet, json!({})), &queue).await;
+        let outcome = dispatch(
+            state,
+            cred(1000),
+            2000,
+            frame(Code::PolicyGet, json!({})),
+            &queue,
+        )
+        .await;
         assert_eq!(outcome.reply.expect("reply")["error"]["code"], "forbidden");
 
         // POLL is connection-scope: served regardless of target.
-        let outcome = dispatch(state, cred(1000), 2000, frame(Code::Poll, Value::Null), &queue).await;
+        let outcome = dispatch(
+            state,
+            cred(1000),
+            2000,
+            frame(Code::Poll, Value::Null),
+            &queue,
+        )
+        .await;
         assert_eq!(outcome.reply, Some(Value::Null), "connection scope allowed");
 
         // Root acts for any uid (§5 root-or-self).
-        let outcome = dispatch(state, cred(0), 2000, frame(Code::PolicyGet, json!({})), &queue).await;
+        let outcome = dispatch(
+            state,
+            cred(0),
+            2000,
+            frame(Code::PolicyGet, json!({})),
+            &queue,
+        )
+        .await;
         assert_eq!(outcome.reply.expect("reply")["ok"], true);
         state.unregister_connection(id);
     }
@@ -939,13 +978,30 @@ mod tests {
         state.notify("info", "Diagnostics are being collected…", Some(0));
         state.notify("info", "We've finished collecting diagnostics", Some(100));
 
-        let outcome = dispatch(state, cred(1000), 1000, frame(Code::Poll, Value::Null), &queue).await;
+        let outcome = dispatch(
+            state,
+            cred(1000),
+            1000,
+            frame(Code::Poll, Value::Null),
+            &queue,
+        )
+        .await;
         assert_eq!(outcome.notifications.len(), 2, "both notifications");
-        assert_eq!(outcome.notifications[0]["message"], "Diagnostics are being collected…");
+        assert_eq!(
+            outcome.notifications[0]["message"],
+            "Diagnostics are being collected…"
+        );
         assert_eq!(outcome.reply, Some(json!({ "ok": true, "drained": 2 })));
 
         // Queue empty → empty 0x55 frame (zero-length payload, §5).
-        let outcome = dispatch(state, cred(1000), 1000, frame(Code::Poll, Value::Null), &queue).await;
+        let outcome = dispatch(
+            state,
+            cred(1000),
+            1000,
+            frame(Code::Poll, Value::Null),
+            &queue,
+        )
+        .await;
         assert!(outcome.notifications.is_empty());
         assert_eq!(outcome.reply, Some(Value::Null));
         state.unregister_connection(id);
@@ -997,17 +1053,23 @@ mod tests {
         // Declared length over the 64 KiB cap → error (§5).
         let over = MAX_FRAME_LEN as u32;
         client
-            .write_all(&[0x60, over.to_le_bytes()[0], over.to_le_bytes()[1], over.to_le_bytes()[2], over.to_le_bytes()[3]])
+            .write_all(&[
+                0x60,
+                over.to_le_bytes()[0],
+                over.to_le_bytes()[1],
+                over.to_le_bytes()[2],
+                over.to_le_bytes()[3],
+            ])
             .await
             .expect("write");
-        assert!(read_frame(&mut server).await.is_err(), "oversized frame rejected");
+        assert!(
+            read_frame(&mut server).await.is_err(),
+            "oversized frame rejected"
+        );
 
         // Clean EOF → None.
         drop(client);
-        assert!(matches!(
-            read_frame(&mut server).await,
-            Ok(None)
-        ));
+        assert!(matches!(read_frame(&mut server).await, Ok(None)));
     }
 
     /// The `2×6×100 ms` notification budget is what a dead peer gets (§5):

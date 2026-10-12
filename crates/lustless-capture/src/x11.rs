@@ -22,10 +22,10 @@ use image::{Rgb, RgbImage};
 use x11rb::connection::Connection;
 use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::shm;
-use x11rb::protocol::shm::{ConnectionExt as _, Seg, SegWrapper};
+use x11rb::protocol::shm::{Seg, SegWrapper};
 use x11rb::protocol::xproto::{
     Atom, AtomEnum, ConnectionExt as _, Depth, ImageFormat, MapState, VisualClass, Visualid,
-    VisualType, Window,
+    Visualtype, Window,
 };
 use x11rb::rust_connection::RustConnection;
 
@@ -91,22 +91,22 @@ enum ShmStrategy {
 }
 
 /// A shared-memory backing for one capture: the X server writes the image straight into it.
-enum ShmBacking {
+enum ShmBacking<'a> {
     /// Server-allocated fd segment, mmapped locally.
     ServerFd {
-        seg: SegWrapper<RustConnection>,
+        seg: SegWrapper<&'a RustConnection>,
         map: MappedRegion,
     },
     /// SysV segment attached both locally and server-side.
     SysV {
-        seg: SegWrapper<RustConnection>,
+        seg: SegWrapper<&'a RustConnection>,
         ptr: *mut u8,
         shmid: libc::c_int,
         len: usize,
     },
 }
 
-impl ShmBacking {
+impl<'a> ShmBacking<'a> {
     fn segment_id(&self) -> Seg {
         match self {
             ShmBacking::ServerFd { seg, .. } | ShmBacking::SysV { seg, .. } => seg.seg(),
@@ -123,7 +123,7 @@ impl ShmBacking {
     }
 }
 
-impl Drop for ShmBacking {
+impl Drop for ShmBacking<'_> {
     fn drop(&mut self) {
         // `seg` (dropped first, field order) detaches the server-side X resource; then the
         // local mapping goes away and SysV segments are marked for removal.
@@ -185,7 +185,7 @@ impl Drop for MappedRegion {
 // SAFETY: the mapped pointers only ever live on the capture thread that owns the backend;
 // they are not shared between threads.
 unsafe impl Send for MappedRegion {}
-unsafe impl Send for ShmBacking {}
+unsafe impl Send for ShmBacking<'_> {}
 
 /// A grabbed (not yet converted) frame.
 struct RawFrame {
@@ -203,8 +203,9 @@ impl X11Backend {
         let pixel_format = screen_pixel_format(&conn, screen_num)
             .ok_or_else(|| CaptureError::Connect("no pixmap format for root depth".into()))?;
         let shm_ok = shm::query_version(&conn)
-            .map(|cookie| cookie.check().is_ok())
-            .unwrap_or(false);
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .is_some();
         if !shm_ok {
             log::warn!("capture: MIT-SHM unavailable on this X server, using socket GetImage");
         }
@@ -243,18 +244,20 @@ impl X11Backend {
                     let info = match self
                         .conn
                         .randr_get_output_info(*output, res.config_timestamp)
-                        .and_then(|c| c.reply())
+                        .ok()
+                        .and_then(|c| c.reply().ok())
                     {
-                        Ok(info) if info.crtc != 0 => info,
+                        Some(info) if info.crtc != 0 => info,
                         _ => continue,
                     };
                     let crtc = match self
                         .conn
                         .randr_get_crtc_info(info.crtc, res.config_timestamp)
-                        .and_then(|c| c.reply())
+                        .ok()
+                        .and_then(|c| c.reply().ok())
                     {
-                        Ok(crtc) => crtc,
-                        Err(_) => continue,
+                        Some(crtc) => crtc,
+                        None => continue,
                     };
                     if crtc.width > 0 && crtc.height > 0 {
                         rects.push([
@@ -324,14 +327,14 @@ impl X11Backend {
 
         let strategy = self.shm_strategy.unwrap_or(ShmStrategy::ServerSegment);
         let mut backing = match strategy {
-            ShmStrategy::ServerSegment => match self.attach_server_segment(len) {
+            ShmStrategy::ServerSegment => match Self::attach_server_segment(&self.conn, len) {
                 Ok(backing) => backing,
                 Err(e) => {
                     log::warn!("capture: ShmCreateSegment unsupported ({e}), trying SysV segments");
-                    self.attach_sysv_segment(len)?
+                    Self::attach_sysv_segment(&self.conn, len)?
                 }
             },
-            ShmStrategy::SysV => self.attach_sysv_segment(len)?,
+            ShmStrategy::SysV => Self::attach_sysv_segment(&self.conn, len)?,
         };
         self.shm_strategy = Some(match backing {
             ShmBacking::ServerFd { .. } => ShmStrategy::ServerSegment,
@@ -346,7 +349,7 @@ impl X11Backend {
             width as u16,
             height as u16,
             u32::MAX,
-            ImageFormat::ZPixmap.into(),
+            ImageFormat::Z_PIXMAP.into(),
             backing.segment_id(),
             0,
         )
@@ -375,25 +378,30 @@ impl X11Backend {
     }
 
     /// Server-allocated segment (MIT-SHM 1.2 `ShmCreateSegment`): no SysV permission issues.
-    fn attach_server_segment(&self, len: usize) -> Result<ShmBacking, CaptureError> {
-        let shmseg = self
-            .conn
-            .generate_id()
-            .map_err(|e| shm_fail("generate_id", e))?;
-        let reply = shm::create_segment(&self.conn, shmseg, len as u32, false)
+    fn attach_server_segment(
+        conn: &RustConnection,
+        len: usize,
+    ) -> Result<ShmBacking<'_>, CaptureError> {
+        let shmseg = conn.generate_id().map_err(|e| shm_fail("generate_id", e))?;
+        let reply = shm::create_segment(conn, shmseg, len as u32, false)
             .map_err(|e| shm_fail("ShmCreateSegment request", e))?
             .reply()
             .map_err(|e| shm_fail("ShmCreateSegment reply", e))?;
         let map = unsafe { MappedRegion::map(reply.shm_fd.as_raw_fd(), len)? };
-        let (seg, cookie) = SegWrapper::attach_fd_and_get_cookie(self.conn.clone(), reply.shm_fd, false)
+        let (seg, cookie) = SegWrapper::attach_fd_and_get_cookie(conn, reply.shm_fd, false)
             .map_err(|e| shm_fail("ShmAttach(fd)", e))?;
-        cookie.check().map_err(|e| shm_fail("ShmAttach(fd) check", e))?;
+        cookie
+            .check()
+            .map_err(|e| shm_fail("ShmAttach(fd) check", e))?;
         Ok(ShmBacking::ServerFd { seg, map })
     }
 
     /// Classic SysV segment. The X server attaches as the session user, so the segment is
     /// briefly 0666 around the attach window and 0600 otherwise (root-owned daemon).
-    fn attach_sysv_segment(&self, len: usize) -> Result<ShmBacking, CaptureError> {
+    fn attach_sysv_segment(
+        conn: &RustConnection,
+        len: usize,
+    ) -> Result<ShmBacking<'_>, CaptureError> {
         let shmid = unsafe {
             libc::shmget(
                 libc::IPC_PRIVATE,
@@ -420,16 +428,10 @@ impl X11Backend {
         // Widen for the server's attach, then narrow again once it succeeded.
         set_shm_mode(shmid, 0o666);
         let attached = (|| {
-            let (seg, cookie) = SegWrapper::attach_and_get_cookie(
-                self.conn.clone(),
-                shmid as u32,
-                false,
-            )
-            .map_err(|e| shm_fail("ShmAttach", e))?;
-            cookie
-                .check()
-                .map_err(|e| shm_fail("ShmAttach check", e))?;
-            Ok::<ShmBacking, CaptureError>(ShmBacking::SysV {
+            let (seg, cookie) = SegWrapper::attach_and_get_cookie(conn, shmid as u32, false)
+                .map_err(|e| shm_fail("ShmAttach", e))?;
+            cookie.check().map_err(|e| shm_fail("ShmAttach check", e))?;
+            Ok::<ShmBacking<'_>, CaptureError>(ShmBacking::SysV {
                 seg,
                 ptr: ptr.cast(),
                 shmid,
@@ -454,7 +456,7 @@ impl X11Backend {
         let [x, y, width, height] = rect;
         let reply = x11rb::protocol::xproto::get_image(
             &self.conn,
-            ImageFormat::ZPixmap,
+            ImageFormat::Z_PIXMAP,
             self.root,
             x as i16,
             y as i16,
@@ -518,13 +520,8 @@ impl X11Backend {
     }
 
     fn window_entry(&self, window: Window) -> Option<CapturedApp> {
-        let attrs = self
-            .conn
-            .get_window_attributes(window)
-            .ok()?
-            .reply()
-            .ok()?;
-        if attrs.map_state != MapState::Viewable {
+        let attrs = self.conn.get_window_attributes(window).ok()?.reply().ok()?;
+        if attrs.map_state != MapState::VIEWABLE {
             return None;
         }
         let (x, y, width, height) = self.window_geometry(window)?;
@@ -609,12 +606,7 @@ impl X11Backend {
             1024,
         ) {
             if let Ok(reply) = prop.reply() {
-                if let Some(class) = reply
-                    .value
-                    .split(|b| *b == 0)
-                    .filter(|s| !s.is_empty())
-                    .last()
-                {
+                if let Some(class) = reply.value.split(|b| *b == 0).rfind(|s| !s.is_empty()) {
                     if !class.is_empty() {
                         return String::from_utf8_lossy(class).into_owned();
                     }
@@ -646,17 +638,19 @@ impl X11Backend {
             .ok()?
             .reply()
             .ok()?;
-        prop.value32()?.next()
+        let next = prop.value32()?.next();
+        next
     }
 
     fn window_property_atoms(&self, window: Window, name: &[u8]) -> Vec<Atom> {
         let prop = match self
             .conn
             .get_property(false, window, self.intern(name), AtomEnum::ATOM, 0, 64)
-            .and_then(|c| c.reply())
+            .ok()
+            .and_then(|c| c.reply().ok())
         {
-            Ok(prop) => prop,
-            Err(_) => return Vec::new(),
+            Some(prop) => prop,
+            None => return Vec::new(),
         };
         prop.value32().map(|v| v.collect()).unwrap_or_default()
     }
@@ -737,7 +731,7 @@ fn shm_fail(step: &str, e: impl std::fmt::Display) -> CaptureError {
 fn set_shm_mode(shmid: libc::c_int, mode: libc::mode_t) {
     let mut ds: libc::shmid_ds = unsafe { std::mem::zeroed() };
     if unsafe { libc::shmctl(shmid, libc::IPC_STAT, &mut ds) } == 0 {
-        ds.shm_perm.mode = (ds.shm_perm.mode & !0o777) | mode;
+        ds.shm_perm.mode = (ds.shm_perm.mode & !0o777) | (mode as u16);
         unsafe {
             libc::shmctl(shmid, libc::IPC_SET, &mut ds);
         }
@@ -761,14 +755,14 @@ fn screen_pixel_format(conn: &RustConnection, screen_num: usize) -> Option<Pixel
     })
 }
 
-fn find_visual(depths: &[Depth], visual_id: Visualid) -> Option<&VisualType> {
+fn find_visual(depths: &[Depth], visual_id: Visualid) -> Option<&Visualtype> {
     depths
         .iter()
         .flat_map(|depth| depth.visuals.iter())
         .find(|visual| {
             visual.visual_id == visual_id
-                && (visual.class == VisualClass::TrueColor
-                    || visual.class == VisualClass::DirectColor)
+                && (visual.class == VisualClass::TRUE_COLOR
+                    || visual.class == VisualClass::DIRECT_COLOR)
         })
 }
 
@@ -830,7 +824,21 @@ pub fn open(
 ) -> Result<Box<dyn CaptureBackend>, CaptureError> {
     match crate::resolve_backend(choice, session_type) {
         BackendChoice::X11 => Ok(Box::new(X11Backend::connect()?)),
-        BackendChoice::Wayland => Ok(Box::new(crate::wayland::WaylandBackend::new()?)),
+        BackendChoice::Wayland => {
+            #[cfg(feature = "wayland-portal")]
+            {
+                Ok(Box::new(crate::wayland::WaylandBackend::new()?))
+            }
+            #[cfg(not(feature = "wayland-portal"))]
+            {
+                log::warn!(
+                    "capture: this build has no Wayland portal backend (built against \
+                     the pipewire-0.3 base); falling back to X11/XWayland root capture \
+                     — reduced coverage on Wayland-native windows"
+                );
+                Ok(Box::new(X11Backend::connect()?))
+            }
+        }
         BackendChoice::Auto => unreachable!("resolve_backend never returns Auto"),
     }
 }
@@ -846,9 +854,9 @@ mod tests {
         assert_eq!(apply_mask(px, 0x00FF0000), 0xAA);
         assert_eq!(apply_mask(px, 0x0000FF00), 0xBB);
         assert_eq!(apply_mask(px, 0x000000FF), 0xCC);
-        // 5-6-5 style masks round correctly.
-        assert_eq!(apply_mask(0b10000_000000_10000, 0xF800), 255);
-        assert_eq!(apply_mask(0b00001_000000_00001, 0x001F), 8);
+        // 5-6-5 style masks: the channel max must reach 255, and small values round.
+        assert_eq!(apply_mask(0b1111_1000_0001_0000, 0xF800), 255);
+        assert_eq!(apply_mask(0b0000_1000_0000_0001, 0x001F), 8);
     }
 
     #[test]
@@ -878,7 +886,8 @@ mod tests {
 
     #[test]
     fn convert_pads_24bpp_scanlines() {
-        // One pixel of 24bpp, scanline padded to 4 bytes.
+        // One pixel of 24bpp (blue,green,red byte order under these masks — same layout as
+        // the BGRA case above), scanline padded to 4 bytes.
         let data = [7u8, 8, 9, 0];
         let fmt = PixelFormat {
             bits_per_pixel: 24,
@@ -887,7 +896,7 @@ mod tests {
             blue_mask: 0x0000FF,
         };
         let img = convert_to_rgb(&data, 1, 1, fmt).unwrap();
-        assert_eq!(img.get_pixel(0, 0).0, [7, 8, 9]);
+        assert_eq!(img.get_pixel(0, 0).0, [9, 8, 7]);
     }
 
     #[test]

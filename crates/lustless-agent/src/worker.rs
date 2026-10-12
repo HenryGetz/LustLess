@@ -126,7 +126,7 @@ fn run(stop: &AtomicBool, socket_path: &Path, tx: &Sender<Update>) {
         }
 
         // 2. Refresh the policy snapshot every ~5 s.
-        if ticks % POLICY_EVERY_TICKS == 0 {
+        if ticks.is_multiple_of(POLICY_EVERY_TICKS) {
             let live = conn.as_mut().expect("connected above");
             match live.request(Code::PolicyGet, json!({}), REQUEST_TIMEOUT) {
                 Ok((reply, notifications)) => {

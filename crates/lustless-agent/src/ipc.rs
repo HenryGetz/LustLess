@@ -70,7 +70,7 @@ pub struct Connection {
 impl Connection {
     /// Connects to the daemon socket.
     pub fn connect(path: &Path) -> Result<Connection, IpcError> {
-        let mut stream = connect(path)?;
+        let stream = connect(path)?;
         stream
             .set_read_timeout(Some(READ_TIMEOUT))
             .map_err(|err| IpcError::Protocol(format!("set_read_timeout: {err}")))?;

@@ -18,11 +18,7 @@ use lustless_core::settings::{UserInfo, DEFAULT_FILTER_LEVEL};
 /// CE's blocking-level vocabulary (`filter-surface.md` §1b; §9 `filter.level`)
 /// — the only values IPC `0x63 FILTER_SET_LEVEL` and the `filter_level` field
 /// of `0x53 USER_SETTINGS_CHANGE` accept.
-pub const FILTER_LEVELS: [&str; 3] = [
-    "Standard Blocking",
-    "Strong Blocking",
-    "Blocking Enabled",
-];
+pub const FILTER_LEVELS: [&str; 3] = ["Standard Blocking", "Strong Blocking", "Blocking Enabled"];
 
 /// The §9 `LOGGED_OUT|LOGGING_IN|LOGGED_IN|SWITCHING_USER` state machine.
 ///
@@ -128,7 +124,7 @@ impl PolicyMachine {
 }
 
 /// The §9 service flags mirrored from the `user_info` row (§6.2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct UserFlags {
     /// `user_info.is_active`.
     pub is_active: bool,
@@ -150,22 +146,6 @@ pub struct UserFlags {
     pub has_dns_filtering: bool,
     /// §9 `has_url_filtering`.
     pub has_url_filtering: bool,
-}
-
-impl Default for UserFlags {
-    fn default() -> Self {
-        UserFlags {
-            is_active: false,
-            can_override: false,
-            is_panicked: false,
-            has_accountability: false,
-            has_filtering: false,
-            has_screen_accountability: false,
-            has_url_accountability: false,
-            has_dns_filtering: false,
-            has_url_filtering: false,
-        }
-    }
 }
 
 impl From<&UserInfo> for UserFlags {
@@ -317,15 +297,17 @@ mod tests {
         assert!(flags.has_filtering);
         assert!(flags.has_screen_accountability);
         assert!(flags.has_dns_filtering);
-        assert!(!flags.is_panicked, "§3/§9: offline sessions are not panicked");
-        assert!(!flags.can_override, "self-override stays server/admin-gated");
+        assert!(
+            !flags.is_panicked,
+            "§3/§9: offline sessions are not panicked"
+        );
+        assert!(
+            !flags.can_override,
+            "self-override stays server/admin-gated"
+        );
         assert_eq!(
             FILTER_LEVELS,
-            [
-                "Standard Blocking",
-                "Strong Blocking",
-                "Blocking Enabled"
-            ],
+            ["Standard Blocking", "Strong Blocking", "Blocking Enabled"],
             "CE level vocabulary (filter-surface.md §1b)"
         );
     }

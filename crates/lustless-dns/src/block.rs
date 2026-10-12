@@ -66,8 +66,8 @@ pub enum BlockError {
 /// Other query types receive the CNAME alone, which makes the stub resolver
 /// chase into a follow-up A/AAAA query that is blocked in turn.
 pub fn synthesize_block_answer(upstream: &[u8], block_host: &Name) -> Result<Vec<u8>, BlockError> {
-    let upstream = Message::from_vec(upstream)
-        .map_err(|e| BlockError::Unparseable(e.to_string()))?;
+    let upstream =
+        Message::from_vec(upstream).map_err(|e| BlockError::Unparseable(e.to_string()))?;
     let Some(question) = upstream.queries().first() else {
         return Err(BlockError::NoQuestion);
     };
@@ -152,7 +152,10 @@ impl BlockPageServer {
     /// port 80; the daemon owns bind failures).
     pub async fn bind(addr: std::net::SocketAddr, block_host: &str) -> std::io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
-        Ok(Self { listener, html: Arc::from(default_block_page_html(block_host)) })
+        Ok(Self {
+            listener,
+            html: Arc::from(default_block_page_html(block_host)),
+        })
     }
 
     /// The actual bound address (useful when binding port 0 in tests).
@@ -181,7 +184,9 @@ async fn serve_connection(mut stream: TcpStream, html: &str) -> std::io::Result<
     loop {
         let n = tokio::time::timeout(CLIENT_IO_TIMEOUT, stream.read(&mut chunk))
             .await
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "request head timeout"))??;
+            .map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "request head timeout")
+            })??;
         if n == 0 {
             break;
         }
@@ -233,7 +238,10 @@ mod tests {
         msg.set_recursion_desired(true);
         msg.set_authoritative(true);
         msg.set_response_code(ResponseCode::NXDomain);
-        msg.add_query(Query::query(Name::from_ascii("bad.example.com").unwrap(), qtype));
+        msg.add_query(Query::query(
+            Name::from_ascii("bad.example.com").unwrap(),
+            qtype,
+        ));
         msg.add_answer(Record::from_rdata(
             Name::from_ascii("bad.example.com").unwrap(),
             300,
@@ -272,10 +280,22 @@ mod tests {
         let flags = u16::from_be_bytes([wire[2], wire[3]]);
         assert_ne!(flags & 0x8000, 0, "QR must be set");
         assert_eq!(flags & 0x000F, 0, "RCODE must be NOERROR");
-        assert_eq!(u16::from_be_bytes([wire[4], wire[5]]), 1, "QDCOUNT preserved");
-        assert_eq!(u16::from_be_bytes([wire[6], wire[7]]), 2, "ANCOUNT = CNAME + A");
+        assert_eq!(
+            u16::from_be_bytes([wire[4], wire[5]]),
+            1,
+            "QDCOUNT preserved"
+        );
+        assert_eq!(
+            u16::from_be_bytes([wire[6], wire[7]]),
+            2,
+            "ANCOUNT = CNAME + A"
+        );
         assert_eq!(u16::from_be_bytes([wire[8], wire[9]]), 0, "NSCOUNT zeroed");
-        assert_eq!(u16::from_be_bytes([wire[10], wire[11]]), 0, "ARCOUNT zeroed");
+        assert_eq!(
+            u16::from_be_bytes([wire[10], wire[11]]),
+            0,
+            "ARCOUNT zeroed"
+        );
 
         let parsed = Message::from_vec(&wire).unwrap();
         assert_eq!(parsed.id(), 0x1337);
@@ -302,7 +322,8 @@ mod tests {
 
     #[test]
     fn aaaa_query_synthesizes_loopback_aaaa() {
-        let wire = synthesize_block_answer(&upstream_reply(RecordType::AAAA), &test_host()).unwrap();
+        let wire =
+            synthesize_block_answer(&upstream_reply(RecordType::AAAA), &test_host()).unwrap();
         let parsed = Message::from_vec(&wire).unwrap();
         assert_eq!(parsed.answers().len(), 2);
         match parsed.answers()[1].data() {

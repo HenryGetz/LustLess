@@ -631,11 +631,7 @@ mod tests {
         let event_rows: i64 = sink
             .outbox
             .conn()
-            .query_row(
-                "SELECT COUNT(*) FROM dns_activity",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM dns_activity", [], |row| row.get(0))
             .unwrap();
         assert_eq!(event_rows, 0);
         assert_ne!(

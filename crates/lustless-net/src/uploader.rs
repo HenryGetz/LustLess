@@ -39,19 +39,16 @@ use std::time::Duration;
 
 use lustless_core::clock::{system_unix, ClockAnchor};
 use lustless_core::config::LustlessConfig;
-use lustless_core::db::{
-    ClaimedRow, EventTable, Outbox, DEFAULT_MIN_AGE_SECS, STALE_SENDING_SECS,
-};
+use lustless_core::db::{ClaimedRow, EventTable, Outbox, DEFAULT_MIN_AGE_SECS, STALE_SENDING_SECS};
 use lustless_core::ids;
 use lustless_core::metrics::{
     AggTag, Aggregation, BucketTag, MetricField, MetricName, MetricRow, MetricSink,
     OPERATION_AGGREGATE,
 };
 use lustless_core::records::{
-    circumvention_record, install_activity_record, login_activity_record,
+    circumvention_record, install_activity_record, local_architecture, login_activity_record,
     switch_user_activity_record, web_activity_record, CircumventionFields, ClientBlock,
     InstallFields, LoginActivityFields, RecordContext, SwitchUserFields, WebActivityFields,
-    local_architecture,
 };
 use lustless_core::settings::SettingsDb;
 use lustless_core::LUSTLESS_VERSION;
@@ -188,7 +185,9 @@ impl Http for ReqwestHttp {
                 builder = builder.header("Authorization", format!("Bearer {token}"));
             }
             if let Some(body) = request.body {
-                builder = builder.header("Content-Type", "application/json").body(body);
+                builder = builder
+                    .header("Content-Type", "application/json")
+                    .body(body);
             }
             let response = builder.send().await.map_err(|err| err.to_string())?;
             let status = response.status().as_u16();
@@ -340,7 +339,8 @@ pub(crate) fn track_api_call(
         value: json!(1),
     }];
     let mut outbox = lock_outbox(outbox);
-    if let Err(err) = MetricSink::new(&mut outbox).record(&username, metric, &bucket, &tags, &fields)
+    if let Err(err) =
+        MetricSink::new(&mut outbox).record(&username, metric, &bucket, &tags, &fields)
     {
         warn!("failed to record api self-metric: {err}");
     }
@@ -430,7 +430,9 @@ pub(crate) fn lock_outbox(outbox: &Mutex<Outbox>) -> MutexGuard<'_, Outbox> {
 /// Reads the clock anchor (pinned `std::sync::RwLock` type; poison
 /// recovered).
 pub(crate) fn read_clock(clock: &RwLock<ClockAnchor>) -> RwLockReadGuard<'_, ClockAnchor> {
-    clock.read().unwrap_or_else(|poisoned| poisoned.into_inner())
+    clock
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Writes the clock anchor (pinned `std::sync::RwLock` type; poison
@@ -1057,7 +1059,10 @@ impl Uploader {
                         path_segment(&username)
                     );
                     let body = json!({ "records": records }).to_string();
-                    match self.send("activity_log", ApiMethod::Post, &url, Some(body)).await {
+                    match self
+                        .send("activity_log", ApiMethod::Post, &url, Some(body))
+                        .await
+                    {
                         SendOutcome::Accepted => {
                             match lock_outbox(&self.outbox).mark_sent(table, &ok_ids) {
                                 Ok(count) => outcome.rows += count,
@@ -1103,7 +1108,10 @@ impl Uploader {
             let body =
                 Value::Array(queued_metrics.iter().map(metric_row_value).collect()).to_string();
             let url = format!("{}/v1/metrics", base_url(&self.cfg));
-            match self.send("metrics", ApiMethod::Post, &url, Some(body)).await {
+            match self
+                .send("metrics", ApiMethod::Post, &url, Some(body))
+                .await
+            {
                 SendOutcome::Accepted | SendOutcome::Rejected => {
                     // A deterministic 4xx rejection acks the buckets out of
                     // the queue as well: `metrics` has no delete path (§6.1)
@@ -1171,7 +1179,10 @@ impl Uploader {
             if !records.is_empty() {
                 let url = format!("{}/v1/telemetry/store", base_url(&self.cfg));
                 let body = Value::Array(records).to_string();
-                match self.send("telemetry", ApiMethod::Post, &url, Some(body)).await {
+                match self
+                    .send("telemetry", ApiMethod::Post, &url, Some(body))
+                    .await
+                {
                     SendOutcome::Accepted => {
                         match lock_outbox(&self.outbox).mark_sent(EventTable::Telemetry, &ok_ids) {
                             Ok(count) => outcome.rows += count,
@@ -1242,7 +1253,10 @@ impl Uploader {
                     path_segment(&username)
                 );
                 let body = json!({ "records": [record] }).to_string();
-                match self.send("activity_log", ApiMethod::Post, &url, Some(body)).await {
+                match self
+                    .send("activity_log", ApiMethod::Post, &url, Some(body))
+                    .await
+                {
                     SendOutcome::Accepted | SendOutcome::Rejected => {
                         self.install_reported = true;
                         let _ = lock_outbox(&self.outbox)
@@ -1738,7 +1752,8 @@ mod tests {
             }
         }
         let web_batch = &posts_with(harness.http.as_ref(), "webActivityRecord")[0];
-        let body: Value = serde_json::from_slice(web_batch.body.as_ref().unwrap().as_bytes()).unwrap();
+        let body: Value =
+            serde_json::from_slice(web_batch.body.as_ref().unwrap().as_bytes()).unwrap();
         assert_eq!(body["records"].as_array().unwrap().len(), 2);
 
         // Everything acked ⇒ a second cycle claims nothing new.
@@ -1793,7 +1808,8 @@ mod tests {
         assert_eq!(outcome.rows, 1);
         let posts = posts_with(harness.http.as_ref(), "webActivityRecord");
         assert_eq!(posts.len(), 1);
-        let body: Value = serde_json::from_slice(posts[0].body.as_ref().unwrap().as_bytes()).unwrap();
+        let body: Value =
+            serde_json::from_slice(posts[0].body.as_ref().unwrap().as_bytes()).unwrap();
         assert_eq!(body["records"].as_array().unwrap().len(), 1);
         assert_eq!(
             harness.dns_rows_left(),
@@ -1807,7 +1823,8 @@ mod tests {
         let mut harness = Harness::new("throttle");
         // The server throttles the upload routes; status routes still answer.
         harness.http = Arc::new(MockHttp::new(|request| {
-            if request.url.ends_with("/v1/status/ping") || request.url.ends_with("/v1/status/time") {
+            if request.url.ends_with("/v1/status/ping") || request.url.ends_with("/v1/status/time")
+            {
                 MockHttp::ok_json("{}")
             } else {
                 ApiResponse {
@@ -1861,7 +1878,10 @@ mod tests {
         assert_eq!(outcome.rows, 1, "stale claim requeued and delivered");
         // Exactly the requeued web batch — the one-shot install report shares
         // the activity route but is not this row's delivery.
-        assert_eq!(posts_with(harness.http.as_ref(), "webActivityRecord").len(), 1);
+        assert_eq!(
+            posts_with(harness.http.as_ref(), "webActivityRecord").len(),
+            1
+        );
     }
 
     #[test]
@@ -1896,7 +1916,9 @@ mod tests {
         assert!(urls
             .iter()
             .any(|url| url == "https://api.test/v1/telemetry/store"));
-        assert!(urls.iter().any(|url| url == "https://api.test/v1/logs/store"));
+        assert!(urls
+            .iter()
+            .any(|url| url == "https://api.test/v1/logs/store"));
         let logs_body = harness
             .http
             .calls
@@ -1910,7 +1932,12 @@ mod tests {
         assert!(!records.is_empty());
         for record in records {
             for key in [
-                "username", "request", "response", "process", "component", "timestamp",
+                "username",
+                "request",
+                "response",
+                "process",
+                "component",
+                "timestamp",
             ] {
                 assert!(record.get(key).is_some(), "audit record missing {key}");
             }
@@ -1964,10 +1991,16 @@ mod tests {
         let mut uploader = harness.uploader();
         let runtime = runtime();
         runtime.block_on(uploader.flush_cycle());
-        assert_eq!(posts_with(harness.http.as_ref(), "installActivityRecord").len(), 1);
+        assert_eq!(
+            posts_with(harness.http.as_ref(), "installActivityRecord").len(),
+            1
+        );
         // Second cycle: no repeat.
         runtime.block_on(uploader.flush_cycle());
-        assert_eq!(posts_with(harness.http.as_ref(), "installActivityRecord").len(), 1);
+        assert_eq!(
+            posts_with(harness.http.as_ref(), "installActivityRecord").len(),
+            1
+        );
     }
 
     #[test]
@@ -2071,7 +2104,9 @@ mod tests {
         assert_eq!(install["installActivityRecord"]["device_uuid"], "uuid-1");
         assert_eq!(install["installActivityRecord"]["platform"], "Linux");
         assert_eq!(install["installActivityRecord"]["platformVersion"], "22.04");
-        assert!(install["installActivityRecord"].get("architecture").is_some());
+        assert!(install["installActivityRecord"]
+            .get("architecture")
+            .is_some());
 
         // Invalid rows produce no record (⇒ dropped, §6.1).
         assert!(build_activity_record(

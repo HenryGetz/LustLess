@@ -1,136 +1,155 @@
 # LustLess scoring model
 
 Model card for the `lustless-classifier` scorer bundle (CONTRACTS §7
-"Scoring model": a clean-room, open-licensed NSFW/image-content classifier
-in ONNX, selected and documented by this file).
+"Scoring model").
 
 ## Choice
 
 | | |
 |---|---|
-| model | **`AdamCodd/vit-base-nsfw-detector`** — ViT-base/16 at 384×384, 2-class (`sfw` / `nsfw`) image classifier |
-| architecture | `ViTForImageClassification`, fine-tuned from [`google/vit-base-patch16-384`](https://huggingface.co/google/vit-base-patch16-384) (ImageNet-21k pretrain, 384px) |
-| provenance | <https://huggingface.co/AdamCodd/vit-base-nsfw-detector>, pinned to revision `8587de998f441aac03fdd57a85d2e4cb808c7d64` |
-| license | **Apache-2.0** (model card `license:` front matter; the `google/vit-base-patch16-384` base is Apache-2.0 as well) |
-| shipped artifact | `onnx/model_quantized.onnx` —88,500,985 bytes, sha256 `432763a6899ebc418c55f784b98f90565e5fc694c778d2ffcb0294b12f6a7404` (uint8 dynamic quantization, ORT-standard quant ops, float32 input/output) |
-| alternatives considered | `Falconsai/nsfw_image_detection` (Apache-2.0, eval acc 0.980375, but ships no ONNX — PyTorch/TF only) and `Marqo/nsfw-image-detection-384` (Apache-2.0, published acc 98.56%, ViT-tiny, but ships only safetensors). This model ships ONNX directly *and* publishes an eval matrix, so `fetch-model.sh` needs no conversion step. |
+| model | **Covenant Eyes' production numeric feature-scoring ensemble**, `ensem_3cls-6.1.2`, as shipped in Covenant Eyes Victory Shield 10.1.44 |
+| architecture | three parallel evaluator shards (`b1`/`b2`/`b3`), each a compact convolutional graph (`Conv`/`Clip`/`Add`/`GlobalAveragePool`/`Flatten`/`Gemm`/`Softmax`) with a 3-value softmax output, folded by a median/minimum threshold stage and a 15-row category table into one linear score; plus a word-feature RBF model (`sw`) that contributes a window-title class to the same table |
+| provenance | the CE 10.1.44 shipped bundle, staged byte-identical by `fetch-model.sh` from `re/samples/data/enc/` (CE CDN fallback) |
+| authorization | **`AUTHORIZATION.md` at the repository root** — upstream (Covenant Eyes) written authorization covers use of these artifacts in this build; the clean-room requirement is waived for the classifier model and bundle data |
+| shipped artifacts | three `scorer` shards (2,323,104 B each, encrypted), one `labels` word model (901,200 B, encrypted), one `mn` CE bundle manifest (1,248 B, encrypted), one generated `calibration` JSON (plaintext) |
 
-Why this model: it is distributable under an OSI license, ships ONNX in the
-repo (no conversion toolchain in the fetch path), publishes held-out metrics
-with a confusion matrix, and is widely used (787k downloads on the Hub).
-
-## Published metrics (model card)
-
-Eval set (~2 800 images; confusion matrix `[[1076, 37], [60, 1627]]`):
-
-| metric | value |
-|---|---|
-| accuracy | **0.9654** |
-| AUC | 0.9948 |
-| loss | 0.0937 |
-| false-SFW rate (NSFW predicted SFW) | 60 / 1 687 ≈ 3.6 % |
-| false-NSFW rate (SFW predicted NSFW) | 37 / 1 113 ≈ 3.3 % |
-
-Training: ~25 000 real images (photos, drawings), lr 3e-5, batch 32, 1 epoch,
-seed 42. The card does not name the training/eval dataset (no dataset license
-to inherit beyond the model's own Apache-2.0).
-
-Caveats stated by the card and relevant here:
-
-* **Generative images**: accuracy drops to 0.86 on AI-generated images
-  (F1 0.8654, AUC 0.9376, precision 0.8350, recall 0.8980). Screenshots of
-  generative-image output therefore score with that error rate.
-* **Restrictive by design**: "sexy" content (e.g. cleavage) is *intended* to
-  score NSFW.
-* **Quantization**: the card notes quantized ONNX "slightly reduce[s] the
-  model's accuracy" without a number; we ship the uint8 quantized variant for
-  CPU/memory footprint (88 MB vs 344 MB fp32) on the Zorin Lite target class.
-  The quoted metrics are the fp32 eval numbers.
+Why: first-party-quality parity with the CE Windows product — same numeric
+decisions, same thresholds, same title semantics — with every format
+recovered and verified against the shipped samples
+(`re/findings/10-classifier/bundle-formats.md`,
+`classifier-internals-classifier.md`, and read-only decompilation notes in
+`MODEL.md` "Recovered formats").
 
 ## Bundle layout (CONTRACTS §7)
 
-`./fetch-model.sh` downloads and verifies everything into `models/` (git-ignored
-except `models/.gitignore`); `packaging/build-deb.sh` installs the directory as
-`/usr/share/lustless/models/`:
+`./fetch-model.sh` stages and verifies everything into `models/` (git-ignored
+except `models/.gitignore`); `packaging/build-deb.sh` installs the directory
+as `/usr/share/lustless/models/`:
 
 ```text
-models/manifest.json                  roles, versions, sha256 per artifact (generated last)
-models/<sha256>-scorer.onnx           ONNX model
-models/<sha256>-labels.json           id2label map (upstream onnx/config.json)
-models/<sha256>-calibration.json      positiveLabel + threshold + rationale
+models/manifest.json                  roles, versions, sha512 per artifact (generated last)
+models/<sha512>-scorer.dat.enc ×3     the ensemble shards (CE b1/b2/b3, byte-identical)
+models/<sha512>-labels.dat.enc        the word/feature model (CE sw, byte-identical)
+models/<sha512>-calibration.json      threshold + rationale (ours, plaintext)
+models/<sha512>-mn.dat.enc            the CE bundle manifest (byte-identical)
 ```
 
-The pins live as constants in `fetch-model.sh`; `lustless-classifier` re-hashes
-every artifact against `manifest.json` at startup and **fails closed** (exit
-non-zero, `bye` on the pipe) on any missing or corrupt file.
+Role mapping (§7): `scorer` → the three `bN` shards, `labels` → `sw`,
+`calibration` → threshold config; `mn` (the upstream CE manifest) is accepted
+when present and cross-checked — every shipped encrypted artifact must appear
+in the decrypted `mn` `files[].sha512_hash` list. The pins live as constants
+in `fetch-model.sh`; at startup `bundles::load` re-verifies every sha512,
+every content-id (CE scheme: first 80 bits of the file's SHA-512 — the
+artifact ids logged at startup are that `<20 hex>-<role>` form) and every
+context-0 decryption, and **fails closed** (exit non-zero, `bye` on the pipe)
+on any mismatch.
 
-## Preprocessing (deterministic, implemented in `scoring.rs`)
+## At-rest encryption (bundle-formats.md §1)
 
-Applied to every window crop exactly as follows — unit-tested on synthetic
-tensors in `scoring::tests`, no model needed:
+The `.dat.enc` payloads ship exactly as CE encrypts them: AES-256-CBC +
+PKCS#7, no IV prefix, no MAC ("context 0"). Key and IV are the recovered
+static constants of §1.2 (key = `SHA-256(XOR-0x50(pooled literals))`,
+IV = `vWzM6BntW18W4gwq`); `bundles.rs` holds both and decrypts once at
+startup. The scheme is obfuscation, not protection (no integrity layer) —
+which is why the sha512/content-id checks around it are mandatory.
 
-1. decode the crop as RGB8 (`image` crate, 8-bit channels);
-2. resize to **384 × 384** with the bilinear triangle filter
-   (`image::imageops::FilterType::Triangle`, the Rust analogue of the
-   upstream `ViTFeatureExtractor`'s `resample: 2` = PIL
-   `Resampling.BILINEAR`; `size: {height: 384, width: 384}`, no center crop);
-3. rescale each channel by `1/255`;
-4. normalize each channel as `(x − 0.5) / 0.5` (upstream `image_mean =
-   image_std = [0.5, 0.5, 0.5]`);
-5. lay out **NCHW** `f32` with batch 1: `[1, 3, 384, 384]`, channel planes
-   R then G then B;
-6. run the ONNX graph — the engine binds the graph's **first input
-   positionally** and reads the **first output** (no hard-coded tensor
-   names), taking `logits[1 × 2]`;
-7. `score = softmax(logits)[index of "nsfw"]` (stable f64 softmax; the label
-   index is resolved case-insensitively from the `labels` artifact, so the
-   `sfw`/`nsfw` positions are data, not code).
+## Shard format (recovered)
 
-The whole path is deterministic: fixed resize filter, fixed arithmetic order,
-`with_deterministic_compute(true)` on the session, no random augmentations.
+Each decrypted shard is one header line plus an ONNX `ModelProto`:
+
+```text
+ensem_3cls-6.1.2,<mean r>,<mean g>,<mean b>,<std r>,<std g>,<std b>\n<protobuf>
+```
+
+* the six header numbers are the per-channel normalization parameters used
+  by the production input path (`157.0,143.0,135.0` / `84.3267…,84.4512…,
+  87.6128…` — mean and standard deviation in pixel scale),
+* the graph: input `input.1` `[1,3,224,224]` `f32`; 101 nodes (52 `Conv`
+  incl. depthwise grouped 3×3, 35 `Clip` ReLU6 clamps, 10 residual `Add`,
+  one `GlobalAveragePool`, `Flatten`, `Gemm` head, `Softmax`); output `[1,3]`,
+* the three output values are the per-shard triple `(class_a, class_b,
+  class_c)`; the ensemble consumes all three shards' triples together,
+* the graph op set is closed — unknown ops fail closed at parse time
+  (`onnx.rs` implements exactly the seven ops above).
+
+## Word-model format (recovered, `sw`)
+
+The decrypted `labels` artifact (`Snowball NLP 2.0` / `rbf`) is parsed per
+the classifier's own loader (`cv::pn::BinarySnowballNLPClassifier`): stop
+word list, a 2,500-entry stemmed-word vocabulary with feature ids, per-
+feature `f64` values, sparse support rows (`(row, feature, weight)`
+triples), per-row coefficients + row indices, and the RBF parameters
+`rho`/`gamma`. Title evaluation (mirroring
+`BinarySnowballNLPAlgorithm::predict`): lowercase → split on whitespace and
+`- . / :` → drop digit/symbol-laden and stop words → Snowball English stem
+(libstemmer algorithm, ported via `rust-stemmers`) → accumulate per-hit
+feature values → L2-normalize → decision `= -rho + Σ coef[i] ·
+exp(-γ·‖x − row‖²)` → class `EXPLICIT` iff the decision ≤ 0 (else
+`UNFLAGGED`); the raw decision rides along as the score value. Full field
+layout: `nlp.rs` module docs.
+
+## Scoring pipeline (recovered, `scoring.rs`)
+
+Per window (`computeScores`/`getVictoryEvaluatorScores`/`getSplicedScore`
+semantics from the `j1` bundle, implemented natively):
+
+1. crop by `apps[].appRect` (largest-intersection monitor image,
+   full-frame fallback; `doNotScore` windows skipped — `consumer.rs`),
+2. resize the crop to 224×224 (bilinear), normalize
+   `(pixel − mean[c]) / std[c]` from the shard header, NCHW `f32`,
+3. evaluate all three shards → three `(class_a, class_b, class_c)` triples,
+4. fold through the ensemble thresholds (`imageOnlyThresholds` vs
+   `withWindowTitleThresholds`, selected by whether a usable title exists):
+   median of `class_a` above 0.6 ⇒ highly-clean; explicit-side check
+   (minimum ≥ 0.999 without a title, median > 0.78 with) ⇒ explicit;
+   near-zero median `class_a` + any `class_b` sliver ⇒ highly-suggestive;
+   median `class_a` < 0.05 + median `class_b` > 0.8 ⇒ suggestive; else clean,
+5. splice the discrete class with the title class
+   (`UNFLAGGED`/`EXPLICIT`/absent) through the 15-row category table into a
+   linear value `[0, 100_000]` (category bases `k·6666` + up to `6665·strength`,
+   strength inverted for the clean classes),
+6. report `score = linear / 100_000`.
+
+Deterministic deviations from the bundle, both documented in code:
+`HighlyClean` strength is fixed at 1.0 (the bundle uses a random value to
+diversify the uploaded feed; no score leaves the device here), and the
+title preprocessor drops the bundle's `fixAndFilterWindowTitle` telemetry
+logging. The title pipeline itself is ported verbatim: leet-speak
+normalization (interior symbol rewrite per word, then the misspelling
+table), then the non-context / all-symbol-word / entropy filters, with
+underscore runs converted to spaces inside the filter checks only (a
+kept title preserves its underscores). No upload/network logic from the
+bundle is ported — the records-only invariant of §7 holds unmodified.
 
 ## Threshold rationale
 
-`flagged = score >= threshold`, where the threshold comes from the
-`calibration` artifact (`positiveLabel`, `threshold`, `rationale`) and can be
-overridden per run with `--threshold=<0..1>`.
+`flagged = score >= threshold`, threshold from the `calibration` artifact,
+overridable with `--threshold`.
 
-**Default 0.8** (also the code default if a calibration file omits the field):
+**Default 0.46662** = 46 662 / 100 000 = the base of the first `SUGGESTIVE`
+category row (7 × 6 666) — exactly the boundary at which CE's own splice
+labels a window suggestive-or-worse. A flagged window becomes a
+`circumventions` record (uploaded by default, §7 `upload.circumvention_records`),
+so the default mirrors the vendor's own flag boundary rather than a softer
+one. Note the table's "unsafe unflagged" band: an explicit-side image class
+with a clean title sits at base 6 × 6 666 = 39 996, below the flag line —
+that is CE's design, preserved verbatim.
 
-* A flagged window becomes a `circumventions` record — an *accusatory*,
-  uploaded-by-default signal (§7 `upload.circumvention_records`). Precision
-  matters more than recall, so we require high confidence rather than the
-  raw argmax decision (which for a 2-class softmax is 0.5).
-* The classifier is trained to be restrictive (borderline content scores
-  NSFW by design), so low thresholds over-flag ordinary SFW screenshots —
-  the false-positive base rate (≈3.3 % at 0.5) multiplies across every
-  window of every capture.
-* At 0.8 we keep only high-confidence positives; with softmax peakedness on
-  a 2-logit head this retains the bulk of true positives while suppressing
-  borderline flags. The card's threshold-vs-precision/recall trade-off is
-  the intended tuning axis.
+## Performance expectations
 
-Deployment tuning: edit `threshold` in the calibration artifact (then rerun
-`./fetch-model.sh`, which regenerates its hash into `manifest.json`) or pass
-`--threshold` at spawn; the daemon logs which source was active at startup.
+Per window: three forward passes over ~2.3 MB graphs at 224×224 plus one
+RBF evaluation over ~17 k sparse rows. The runtime (`onnx.rs`/`rayon`)
+parallelizes over conv output channels; on the Zorin Lite target class
+expect well under a second per window shard on any CPU the CE Windows
+product already ran on. Scoring is local-only: no image, crop, title or
+score ever leaves the device (§7 ratified invariant — strictly stricter
+than CE's own `ht.dat` score upload).
 
-## Runtime (`ort` configuration — packaging notes)
+## Runtime
 
-* bindings: `ort =2.0.0-rc.13` (wraps **ONNX Runtime 1.28.0**), features =
-  ort defaults with `tls-native` swapped for `tls-rustls` so the build-time
-  binary download uses ring/rustls (no OpenSSL needed on the build host;
-  `packaging/build-deb.sh` also installs `libssl-dev`, so either works).
-* **Build** downloads the prebuilt ORT binaries (`download-binaries`) — the
-  build host needs network access, like the rest of the pinned toolchain.
-* **Linkage: static.** `ort-sys` links `libonnxruntime.a`
-  (`cargo:rustc-link-lib=static=onnxruntime`) unless `ORT_PREFER_DYNAMIC_LINK`
-  is set — the shipped `lustless-classifier` needs **no `libonnxruntime.so`**
-  at runtime. Runtime `.so` requirements are only glibc + `libstdc++.so.6`
-  (both present on every supported target; the `.deb` needs no extra
-  `Depends` for scoring).
-* Session configuration: CPU execution provider (no CUDA/OpenVINO features),
-  `GraphOptimizationLevel::Level3`, deterministic compute, one session per
-  process, `&mut self` inference (sequential per window).
-* Scoring is local-only: no image, crop or score ever leaves the device
-  (§7 ratified invariant — strictly stricter than CE's `ht.dat` score
-  upload).
+Pure Rust: hand-rolled protobuf reader (no generic ONNX dependency), RustCrypto
+AES-256-CBC (`aes`/`cbc`), `rayon` for deterministic per-channel
+parallelism (fixed reduction order ⇒ reproducible results), `rust-stemmers`
+(same libstemmer algorithms CE embeds). No ONNX Runtime, no network
+downloads at build or run time; the `.deb` needs no extra `Depends` for
+scoring.

@@ -57,7 +57,11 @@ impl DaemonState {
             Err(err) => {
                 self.set_diagnostics_in_progress(false);
                 tracing::error!("diagnostics worker spawn failed: {err}");
-                self.notify("error", &format!("Diagnostics collection failed: {err}"), None);
+                self.notify(
+                    "error",
+                    &format!("Diagnostics collection failed: {err}"),
+                    None,
+                );
                 false
             }
         }
@@ -90,7 +94,11 @@ impl DaemonState {
             }
             Err(err) => {
                 tracing::error!("diagnostics collection failed: {err}");
-                self.notify("error", &format!("Diagnostics collection failed: {err}"), None);
+                self.notify(
+                    "error",
+                    &format!("Diagnostics collection failed: {err}"),
+                    None,
+                );
             }
         }
         self.set_diagnostics_in_progress(false);
@@ -206,7 +214,10 @@ fn versions_report(cfg: &LustlessConfig) -> String {
                 .take(MANIFEST_CAP)
                 .map(|b| char::from(*b))
                 .collect();
-            out.push_str(&format!("\nmodel manifest ({} bytes):\n{head}\n", bytes.len()));
+            out.push_str(&format!(
+                "\nmodel manifest ({} bytes):\n{head}\n",
+                bytes.len()
+            ));
         }
         Err(err) => out.push_str(&format!("\nmodel manifest unreadable: {err}\n")),
     }
@@ -239,7 +250,9 @@ fn outbox_integrity(outbox_path: &Path) -> String {
         "telemetry",
     ] {
         let count: i64 = conn
-            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
             .unwrap_or(-1);
         out.push_str(&format!("{table}: {count}\n"));
     }
@@ -317,7 +330,7 @@ fn classifier_log_tails(log_dir: &Path) -> Vec<(String, Vec<u8>)> {
             files.push((modified, name, path));
         }
     }
-    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     files.truncate(LOG_FILE_CAP);
 
     files
@@ -362,7 +375,9 @@ fn write_tar_gz(entries: &[(String, Vec<u8>)], out_path: &Path) -> Result<(), St
             .append_data(&mut header, name, bytes.as_slice())
             .map_err(|e| format!("tar append {name}: {e}"))?;
     }
-    let encoder = builder.into_inner().map_err(|e| format!("tar finish: {e}"))?;
+    let encoder = builder
+        .into_inner()
+        .map_err(|e| format!("tar finish: {e}"))?;
     let file = encoder.finish().map_err(|e| format!("gzip finish: {e}"))?;
     file.sync_all().map_err(|e| format!("sync: {e}"))?;
     Ok(())
@@ -398,10 +413,13 @@ mod tests {
 
         let cfg = state.config();
         let crash = state.crash.clone();
-        let bundle = collect_bundle(&cfg, state.outbox_path(), &crash, &log_dir)
-            .expect("bundle created");
+        let bundle =
+            collect_bundle(&cfg, state.outbox_path(), &crash, &log_dir).expect("bundle created");
         let name = bundle.file_name().unwrap().to_string_lossy().into_owned();
-        assert!(name.starts_with("diagnostics-") && name.ends_with(".tar.gz"), "{name}");
+        assert!(
+            name.starts_with("diagnostics-") && name.ends_with(".tar.gz"),
+            "{name}"
+        );
 
         // gzip magic.
         let mut magic = [0u8; 2];
@@ -419,7 +437,10 @@ mod tests {
             "crash-counters.json",
             "logs/classifier/1234.log",
         ] {
-            assert!(names.iter().any(|n| n == expected), "missing {expected}: {names:?}");
+            assert!(
+                names.iter().any(|n| n == expected),
+                "missing {expected}: {names:?}"
+            );
         }
         // §10 payload rule: no activity DB ever enters the bundle.
         for forbidden in ["outbox.db", "settings.db", "settings.key", ".png"] {

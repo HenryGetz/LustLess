@@ -102,9 +102,7 @@ pub fn request_collect(
 /// the frame was skipped (§5: log-and-ignore).
 fn read_frame(stream: &mut UnixStream) -> Result<Option<Frame>, IpcError> {
     let mut header = [0u8; FRAME_HEADER_LEN];
-    stream
-        .read_exact(&mut header)
-        .map_err(|err| map_read_error(err))?;
+    stream.read_exact(&mut header).map_err(map_read_error)?;
     let payload_len = u32::from_le_bytes([header[1], header[2], header[3], header[4]]) as usize;
     if FRAME_HEADER_LEN + payload_len > MAX_FRAME_LEN {
         return Err(IpcError::Protocol(format!(
@@ -168,7 +166,8 @@ mod tests {
         thread::spawn(move || {
             let (mut sock, _) = listener.accept().expect("accept");
             for frame in prelude {
-                sock.write_all(&frame.encode().expect("encode prelude")).unwrap();
+                sock.write_all(&frame.encode().expect("encode prelude"))
+                    .unwrap();
             }
             let mut header = [0u8; FRAME_HEADER_LEN];
             sock.read_exact(&mut header).expect("read header");
@@ -199,8 +198,12 @@ mod tests {
                 json!({"ok": true, "level": "Strong Blocking"}),
             ),
         );
-        let reply = request(&path, Code::FilterSetLevel, json!({"level": "Strong Blocking"}))
-            .expect("request");
+        let reply = request(
+            &path,
+            Code::FilterSetLevel,
+            json!({"level": "Strong Blocking"}),
+        )
+        .expect("request");
         assert_eq!(reply["level"], "Strong Blocking");
         handle.join().unwrap();
     }
@@ -224,9 +227,13 @@ mod tests {
             ],
             Frame::new(Code::CollectDebugLogs, json!({"ok": true, "started": true})),
         );
-        let (reply, notifications) =
-            request_collect(&path, Code::CollectDebugLogs, json!({}), Duration::from_secs(5))
-                .expect("request");
+        let (reply, notifications) = request_collect(
+            &path,
+            Code::CollectDebugLogs,
+            json!({}),
+            Duration::from_secs(5),
+        )
+        .expect("request");
         assert_eq!(reply["started"], true);
         assert_eq!(notifications.len(), 2);
         assert!(notifications[0]["message"]
@@ -299,8 +306,13 @@ mod tests {
             let (_sock, _) = listener.accept().expect("accept");
             thread::sleep(Duration::from_millis(600));
         });
-        let err = request_collect(&path, Code::StatusGet, serde_json::json!({}), Duration::from_millis(200))
-            .expect_err("timeout");
+        let err = request_collect(
+            &path,
+            Code::StatusGet,
+            serde_json::json!({}),
+            Duration::from_millis(200),
+        )
+        .expect_err("timeout");
         assert!(matches!(err, IpcError::Protocol(_)));
         handle.join().unwrap();
     }

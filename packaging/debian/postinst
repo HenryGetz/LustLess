@@ -158,12 +158,38 @@ install_dns_redirect() {
             networkmanager|resolvconf-file) backup_resolv_conf ;;
         esac
     fi
+    # §8 integration requirement: the forwarder's user path needs the
+    # pre-redirect upstreams — once system DNS points at 127.0.0.2, a
+    # `user_resolvers = ["system"]` would resolve only our own loopback.
+    capture_upstream_resolvers "$detected"
     case "$detected" in
         resolved)         apply_resolved_redirect ;;
         networkmanager)   apply_nm_redirect ;;
         resolvconf-file)  write_forwarder_resolv_conf ;;
     esac
     echo "$detected" > "$PREV_DIR/dns-stack"
+}
+
+# Rewrite `user_resolvers` in the shipped config with the pre-redirect
+# upstream resolvers (address list, excluding loopback).
+capture_upstream_resolvers() {
+    cfg=/etc/lustless/lustless.toml
+    [ -f "$cfg" ] || return 0
+    upstreams=""
+    if [ "$1" = "resolved" ] && command -v resolvectl >/dev/null 2>&1; then
+        upstreams=$(resolvectl dns 2>/dev/null \
+            | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | sort -u | tr '\n' ' ')
+    fi
+    if [ -z "$upstreams" ] && [ -f "$PREV_DIR/resolv.conf.file" ]; then
+        upstreams=$(grep -E '^nameserver' "$PREV_DIR/resolv.conf.file" \
+            | awk '{print $2}' | grep -v '^127\.' | sort -u | tr '\n' ' ')
+    fi
+    upstreams=$(printf '%s' "$upstreams" | sed 's/ *$//')
+    if [ -n "$upstreams" ]; then
+        list=$(printf '%s' "$upstreams" \
+            | sed 's/^/"/; s/ /", "/g; s/ *$//; s/"$/"/')
+        sed -i "s|^user_resolvers = .*|user_resolvers = [$list]|" "$cfg"
+    fi
 }
 
 # ---------------------------------------------------------------------------

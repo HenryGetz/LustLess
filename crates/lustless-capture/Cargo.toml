@@ -18,13 +18,15 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 # X11 backend: x11rb (pure-rust XCB bindings) incl. MIT-SHM + RandR protocol modules.
-x11rb = "0.13.2"
+x11rb = { version = "0.13.2", features = ["randr", "shm"] }
 # Raw libc for SysV shared memory (shmat/shmget) and mmap of the MIT-SHM fd segments.
 libc = "0.2.190"
 
-# Wayland backend: XDG desktop-portal ScreenCast + PipeWire stream consumption.
-ashpd = "0.13.13"
-pipewire = "0.10.1"
+# Wayland backend (optional): XDG desktop-portal ScreenCast + PipeWire stream
+# consumption. Requires pipewire 1.x-era headers (pipewire-rs 0.10); disabled in
+# the glibc-2.35 release build where the base ships pipewire 0.3.x.
+ashpd = { version = "0.13.13", features = ["screencast"], optional = true }
+pipewire = { version = "0.10.1", optional = true }
 
 # Scheduler gates: logind LockedHint/Active + screensaver state over D-Bus.
 zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
@@ -35,6 +37,10 @@ inotify = "0.11.5"
 
 # Locks shared between the PipeWire loop thread and the capture thread.
 parking_lot = "0.12.5"
+
+[features]
+default = ["wayland-portal"]
+wayland-portal = ["dep:ashpd", "dep:pipewire"]
 
 [dev-dependencies]
 tempfile = "3.27.0"

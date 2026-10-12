@@ -33,9 +33,7 @@ use crate::attribution::{Attribution, ProcessAttributor};
 use crate::block::synthesize_block_answer;
 use crate::doh::{DohAnswer, DohClient, DohError, UserLookupError, UserResolver};
 use crate::health::{DnsHealth, FilterState};
-use crate::verdicts::{
-    decide, OverrideVerdict, PathOutcome, ResponseEndpoint, Verdict,
-};
+use crate::verdicts::{decide, OverrideVerdict, PathOutcome, ResponseEndpoint, Verdict};
 use crate::{ActivitySink, DnsActivityRow, DnsError, EngineMutex, HealthSink};
 
 /// §9.1 default `dns.listen`.
@@ -265,8 +263,7 @@ impl DnsServer {
         let local = udp.local_addr()?;
         let this = Arc::new(self);
 
-        let mut udp_task =
-            tokio::spawn(udp_loop(Arc::clone(&this), Arc::clone(&udp), local));
+        let mut udp_task = tokio::spawn(udp_loop(Arc::clone(&this), Arc::clone(&udp), local));
         let mut tcp_task = tokio::spawn(tcp_loop(Arc::clone(&this), tcp, local));
         let probe_task = tokio::spawn(probe_loop(Arc::clone(&this)));
 
@@ -312,7 +309,10 @@ impl DnsServer {
         if query.message_type() != MessageType::Query || query.queries().is_empty() {
             return Some(error_response(data, ResponseCode::FormErr));
         }
-        Some(self.process_query(&query, data, client, local, Instant::now()).await)
+        Some(
+            self.process_query(&query, data, client, local, Instant::now())
+                .await,
+        )
     }
 
     async fn process_query(
@@ -333,6 +333,38 @@ impl DnsServer {
         let fail_closed_block = self.filter_state.lock().fail_closed_blocks_web();
         let filter_outage = self.health.lock().is_outage();
 
+        // §8 fail-closed answers immediately: with no signed-in user there is
+        // nothing to decide per upstream, so never make the client wait on
+        // DoH/user paths (which may themselves be unreachable).
+        if fail_closed_block {
+            let verdict = decide(&crate::verdicts::VerdictInput {
+                fail_closed_block: true,
+                custom: self.policy.custom_override(&domain),
+                global: self.policy.global_override(&domain),
+                safe_search_hit: self.policy.safe_search_domain_hit(&domain),
+                always_allowable: self.policy.always_allowable(&domain),
+                filter_outage,
+                filter_path_configured: self.doh.is_some(),
+                filter: PathOutcome::Failure,
+                user: PathOutcome::Failure,
+            });
+            let served = synthesize_block_answer(wire, &self.block_host)
+                .unwrap_or_else(|_| error_response(wire, ResponseCode::ServFail));
+            let row = build_activity_row(
+                self.policy.username(),
+                domain,
+                &attribution,
+                &verdict,
+                &served,
+                None,
+                started.elapsed().as_millis() as i64,
+            );
+            if let Err(e) = self.sink.log_query(row) {
+                warn!(error = %e, "dns activity sink failed");
+            }
+            return served;
+        }
+
         // §8 dual resolution: filter (DoH) path and user path in parallel.
         let (filter_result, user_result) = tokio::join!(
             async {
@@ -346,8 +378,11 @@ impl DnsServer {
         let (filter_outcome, datacenter) = match filter_result {
             None => (PathOutcome::Failure, None),
             Some(result) => {
-                let (outcome, dc) =
-                    self.observe_doh(result, Instant::now(), crate::health::DohRequestReason::Typical);
+                let (outcome, dc) = self.observe_doh(
+                    result,
+                    Instant::now(),
+                    crate::health::DohRequestReason::Typical,
+                );
                 (outcome, dc)
             }
         };
@@ -430,10 +465,8 @@ impl DnsServer {
         let mut health = self.health.lock();
         match result {
             Ok(answer) => {
-                let rcode_ok = matches!(
-                    answer.rcode,
-                    ResponseCode::NoError | ResponseCode::NXDomain
-                );
+                let rcode_ok =
+                    matches!(answer.rcode, ResponseCode::NoError | ResponseCode::NXDomain);
                 if rcode_ok {
                     health.record_doh_success(
                         answer.datacenter.clone(),
@@ -542,7 +575,9 @@ async fn handle_tcp_conn(
         framed.extend_from_slice(&response);
         tokio::time::timeout(TCP_IO_TIMEOUT, stream.write_all(&framed))
             .await
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "tcp reply timeout"))??;
+            .map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "tcp reply timeout")
+            })??;
         stream.flush().await?;
     }
     Ok(())
@@ -600,7 +635,10 @@ pub(crate) fn build_probe_query() -> Result<Vec<u8>, DnsError> {
 /// of the client query are echoed when parseable; otherwise a bare 12-byte
 /// header with the raw transaction ID.
 pub(crate) fn error_response(query: &[u8], code: ResponseCode) -> Vec<u8> {
-    let id = u16::from_be_bytes([query.first().copied().unwrap_or(0), query.get(1).copied().unwrap_or(0)]);
+    let id = u16::from_be_bytes([
+        query.first().copied().unwrap_or(0),
+        query.get(1).copied().unwrap_or(0),
+    ]);
     let out = match Message::from_vec(query) {
         Ok(parsed) => {
             let mut message = Message::new();
@@ -724,7 +762,10 @@ mod tests {
         message.set_message_type(MessageType::Query);
         message.set_op_code(OpCode::Query);
         message.set_recursion_desired(true);
-        message.add_query(Query::query(Name::from_ascii("example.com").unwrap(), RecordType::A));
+        message.add_query(Query::query(
+            Name::from_ascii("example.com").unwrap(),
+            RecordType::A,
+        ));
         message.to_vec().unwrap()
     }
 
@@ -733,7 +774,10 @@ mod tests {
         let defaults = DnsSettings::default();
         assert!(defaults.enabled);
         assert_eq!(defaults.listen, "127.0.0.2:53");
-        assert_eq!(defaults.doh_url, "https://dns.cleanbrowsing.org/doh/adult-filter");
+        assert_eq!(
+            defaults.doh_url,
+            "https://dns.cleanbrowsing.org/doh/adult-filter"
+        );
         assert_eq!(defaults.user_resolvers, vec!["system".to_string()]);
         assert!(defaults.block_page);
         assert_eq!(defaults.block_page_host, "blocked.lustless.local");
@@ -751,19 +795,38 @@ mod tests {
         let state = server.filter_state();
         assert_eq!(state.lock().active_user_count(), 0);
         assert!(state.lock().fail_closed_blocks_web());
-        assert_eq!(server.health().lock().health(), crate::health::FilterHealth::Healthy);
+        assert_eq!(
+            server.health().lock().health(),
+            crate::health::FilterHealth::Healthy
+        );
     }
 
     #[test]
     fn invalid_configuration_is_rejected() {
-        let bad = DnsSettings { listen: "not-an-addr".into(), ..settings() };
+        let bad = DnsSettings {
+            listen: "not-an-addr".into(),
+            ..settings()
+        };
         assert!(matches!(
-            DnsServer::new(bad, Arc::new(NullSink), Arc::new(NullSink), Arc::new(DomainListPolicy::default())),
+            DnsServer::new(
+                bad,
+                Arc::new(NullSink),
+                Arc::new(NullSink),
+                Arc::new(DomainListPolicy::default())
+            ),
             Err(DnsError::Config(_))
         ));
-        let bad_host = DnsSettings { block_page_host: "bad host!".into(), ..settings() };
+        let bad_host = DnsSettings {
+            block_page_host: "bad host!".into(),
+            ..settings()
+        };
         assert!(matches!(
-            DnsServer::new(bad_host, Arc::new(NullSink), Arc::new(NullSink), Arc::new(DomainListPolicy::default())),
+            DnsServer::new(
+                bad_host,
+                Arc::new(NullSink),
+                Arc::new(NullSink),
+                Arc::new(DomainListPolicy::default())
+            ),
             Err(DnsError::Proto(_))
         ));
     }
@@ -773,7 +836,9 @@ mod tests {
         // Not even a header: dropped (nothing to answer into).
         assert!(error_response(&[0x00], ResponseCode::FormErr).len() >= 12);
         // Header-shaped garbage: bare FORMERR with the raw txid preserved.
-        let garbage = [0x12, 0x34, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let garbage = [
+            0x12, 0x34, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
         let response = error_response(&garbage, ResponseCode::FormErr);
         assert_eq!(response.len(), 12);
         assert_eq!(u16::from_be_bytes([response[0], response[1]]), 0x1234);
@@ -824,7 +889,10 @@ mod tests {
 
     #[test]
     fn activity_row_shape() {
-        let attribution = Attribution { process_id: 4242, process_name: "firefox".into() };
+        let attribution = Attribution {
+            process_id: 4242,
+            process_name: "firefox".into(),
+        };
         let verdict = Verdict {
             resolution_type: VerdictType::BlockedCustom,
             endpoint: ResponseEndpoint::Local,
@@ -845,7 +913,11 @@ mod tests {
         assert_eq!(row.domain, "example.com");
         assert_eq!(row.process_id, 4242);
         assert_eq!(row.process_name, "firefox");
-        assert!(row.datetime_created.ends_with('Z'), "{}", row.datetime_created);
+        assert!(
+            row.datetime_created.ends_with('Z'),
+            "{}",
+            row.datetime_created
+        );
         assert_eq!(row.ip.as_deref(), Some("127.0.0.2"));
         assert_eq!(row.resolution_type, "BlockedCustom");
         assert_eq!(row.connection_type.as_deref(), Some("undefined"));
@@ -860,7 +932,10 @@ mod tests {
         let parsed = Message::from_vec(&first).unwrap();
         assert_eq!(parsed.message_type(), MessageType::Query);
         assert_eq!(parsed.queries().len(), 1);
-        assert_eq!(parsed.queries()[0].name().to_utf8(), format!("{PROBE_DOMAIN}."));
+        assert_eq!(
+            parsed.queries()[0].name().to_utf8(),
+            format!("{PROBE_DOMAIN}.")
+        );
         assert_eq!(parsed.queries()[0].query_type(), RecordType::A);
         assert!(parsed.recursion_desired());
         assert_ne!(
@@ -881,23 +956,44 @@ mod tests {
             .add_always_allowable_domain("school.edu");
         assert_eq!(policy.username(), "alice");
 
-        assert_eq!(policy.custom_override("example.com"), OverrideVerdict::Block);
-        assert_eq!(policy.custom_override("ads.example.com"), OverrideVerdict::Block);
-        assert_eq!(policy.custom_override("EXAMPLE.COM"), OverrideVerdict::Block);
+        assert_eq!(
+            policy.custom_override("example.com"),
+            OverrideVerdict::Block
+        );
+        assert_eq!(
+            policy.custom_override("ads.example.com"),
+            OverrideVerdict::Block
+        );
+        assert_eq!(
+            policy.custom_override("EXAMPLE.COM"),
+            OverrideVerdict::Block
+        );
         assert_eq!(
             policy.custom_override("notexample.com"),
             OverrideVerdict::NotApplicable
         );
-        assert_eq!(policy.global_override("a.b.tracker.net"), OverrideVerdict::Allow);
+        assert_eq!(
+            policy.global_override("a.b.tracker.net"),
+            OverrideVerdict::Allow
+        );
         assert!(policy.safe_search_domain_hit("images.search.example"));
         assert!(!policy.safe_search_domain_hit("search.example.evil.com"));
         assert!(policy.always_allowable("portal.school.edu"));
 
         // Longest suffix wins.
         policy.set_custom_override("ads.example.com", OverrideVerdict::Allow);
-        assert_eq!(policy.custom_override("ads.example.com"), OverrideVerdict::Allow);
-        assert_eq!(policy.custom_override("x.ads.example.com"), OverrideVerdict::Allow);
-        assert_eq!(policy.custom_override("other.example.com"), OverrideVerdict::Block);
+        assert_eq!(
+            policy.custom_override("ads.example.com"),
+            OverrideVerdict::Allow
+        );
+        assert_eq!(
+            policy.custom_override("x.ads.example.com"),
+            OverrideVerdict::Allow
+        );
+        assert_eq!(
+            policy.custom_override("other.example.com"),
+            OverrideVerdict::Block
+        );
     }
 
     #[test]

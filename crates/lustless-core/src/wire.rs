@@ -294,9 +294,8 @@ impl Frame {
         let payload = if payload_len == 0 {
             Value::Null
         } else {
-            let text = std::str::from_utf8(&bytes[FRAME_HEADER_LEN..]).map_err(|e| {
-                CoreError::InvalidFrame(format!("payload is not valid UTF-8: {e}"))
-            })?;
+            let text = std::str::from_utf8(&bytes[FRAME_HEADER_LEN..])
+                .map_err(|e| CoreError::InvalidFrame(format!("payload is not valid UTF-8: {e}")))?;
             serde_json::from_str(text)?
         };
         Ok(DecodeOutcome::Frame(Frame { code, payload }))
@@ -315,7 +314,11 @@ mod tests {
             let frame = Frame::new(code, payload.clone());
             let bytes = frame.encode().expect("encode");
             let body_len = serde_json::to_vec(&payload).expect("payload length").len();
-            assert_eq!(bytes.len(), FRAME_HEADER_LEN + body_len, "framing for {code}");
+            assert_eq!(
+                bytes.len(),
+                FRAME_HEADER_LEN + body_len,
+                "framing for {code}"
+            );
             assert_eq!(bytes[0], code.as_u8());
             let outcome = Frame::decode(&bytes).expect("decode");
             match outcome {
@@ -366,7 +369,7 @@ mod tests {
 
     #[test]
     fn oversize_frames_are_rejected_on_encode_and_decode() {
-        let big = json!( "x".repeat(MAX_FRAME_LEN) );
+        let big = json!("x".repeat(MAX_FRAME_LEN));
         let err = Frame::new(Code::Notification, big).encode().unwrap_err();
         assert!(matches!(err, CoreError::FrameTooLarge), "{err:?}");
 

@@ -13,6 +13,7 @@
 pub mod manifest;
 pub mod scheduler;
 pub mod spool;
+#[cfg(feature = "wayland-portal")]
 pub mod wayland;
 pub mod x11;
 
@@ -92,7 +93,9 @@ pub enum CaptureError {
 /// future. The boxed future keeps the trait object-safe for [`open`]-style dispatch.
 pub trait CaptureBackend: Send {
     /// Capture every available output plus the window list (or its Wayland approximation).
-    fn capture(&mut self) -> Pin<Box<dyn Future<Output = Result<Capture, CaptureError>> + Send + '_>>;
+    fn capture(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Capture, CaptureError>> + Send + '_>>;
 }
 
 /// Backend selector per CONTRACTS §7: `auto` = X11 when `XDG_SESSION_TYPE=x11`, else Wayland.

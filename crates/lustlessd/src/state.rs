@@ -160,6 +160,7 @@ impl NotifyMsg {
 #[derive(Debug, Clone, Default)]
 pub struct DomainLists {
     /// Username whose custom overrides are cached.
+    #[allow(dead_code)] // documents cache ownership; set on refresh
     pub username: String,
     /// `custom_domain_overrides` for `username`.
     pub custom: HashMap<String, lustless_dns::OverrideVerdict>,
@@ -394,7 +395,8 @@ impl DaemonState {
             return Ok(Arc::clone(existing));
         }
         let dir = Path::new(&self.cfg_static.daemon.state_dir).join(uid.to_string());
-        std::fs::create_dir_all(&dir).map_err(|e| format!("settings dir {}: {e}", dir.display()))?;
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("settings dir {}: {e}", dir.display()))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -521,7 +523,7 @@ impl DaemonState {
             message: message.to_string(),
             progress,
         };
-        let mut conns = guard(&self.notifications);
+        let conns = guard(&self.notifications);
         if conns.is_empty() {
             tracing::debug!(target: "notification", "{message} (no connected clients)");
             return;
@@ -555,9 +557,7 @@ impl DaemonState {
         // A break-glass taken before the forwarder started must apply to it.
         let fail_open = guard(&self.policy).fail_open_override;
         if fail_open {
-            filter_state
-                .lock()
-                .set_fail_closed_when_signed_out(false);
+            filter_state.lock().set_fail_closed_when_signed_out(false);
         }
         *guard(&self.dns_filter) = Some(filter_state);
         *guard(&self.dns_health) = Some(health);
@@ -577,7 +577,11 @@ impl DaemonState {
         };
         tracing::info!(
             "dns filter ref-count: {active} user(s) after {} for {username}",
-            if want_filtering { "activation" } else { "deactivation" }
+            if want_filtering {
+                "activation"
+            } else {
+                "deactivation"
+            }
         );
     }
 
@@ -705,7 +709,10 @@ impl DaemonState {
         if flags_after.has_filtering != old_filtering {
             self.sync_membership(&username, flags_after.has_filtering);
         }
-        tracing::info!("user settings changed for {username} (fields: {})", obj.len());
+        tracing::info!(
+            "user settings changed for {username} (fields: {})",
+            obj.len()
+        );
         Ok(())
     }
 
@@ -748,7 +755,10 @@ impl DaemonState {
                 .map_err(db_err)?;
         }
         self.refresh_domain_lists();
-        tracing::info!("domain override for {username}: {domain} -> {}", verdict.as_str());
+        tracing::info!(
+            "domain override for {username}: {domain} -> {}",
+            verdict.as_str()
+        );
         Ok(())
     }
 
@@ -850,7 +860,8 @@ impl DaemonState {
 
     /// Marks/reads the §5 `0x43` in-progress flag.
     pub fn set_diagnostics_in_progress(&self, running: bool) {
-        self.diagnostics_in_progress.store(running, Ordering::Relaxed);
+        self.diagnostics_in_progress
+            .store(running, Ordering::Relaxed);
     }
 
     /// Installs the running `NetServices` handle (Clone keeps it usable beside
@@ -872,9 +883,12 @@ impl DaemonState {
     /// IPC, uid-bound, TTL 10 min — pinned `issue_dashboard_token`).
     pub fn dashboard_url(&self, uid: u32) -> Option<String> {
         let port = rguard(&self.cfg_live).daemon.dashboard_port;
-        self.net
-            .get()
-            .map(|net| format!("http://127.0.0.1:{port}/?t={}", net.issue_dashboard_token(uid)))
+        self.net.get().map(|net| {
+            format!(
+                "http://127.0.0.1:{port}/?t={}",
+                net.issue_dashboard_token(uid)
+            )
+        })
     }
 
     /// Requests daemon shutdown (IPC `0x51 QUIT` or SIGTERM path).
@@ -995,8 +1009,8 @@ impl DaemonState {
         let toml_value = json_to_toml(value.clone())?;
         let text = std::fs::read_to_string(&self.config_path)
             .map_err(|e| format!("config read failed: {e}"))?;
-        let mut table: toml::Table = toml::from_str(&text)
-            .map_err(|e| format!("config parse failed: {e}"))?;
+        let mut table: toml::Table =
+            toml::from_str(&text).map_err(|e| format!("config parse failed: {e}"))?;
         let (section, field) = key
             .split_once('.')
             .ok_or_else(|| format!("unknown config key: {key}"))?;
@@ -1011,8 +1025,7 @@ impl DaemonState {
         }
         // Type-check the edited document before anything touches disk (§9.1
         // parse-failure fallback semantics).
-        let rendered = toml::to_string(&table)
-            .map_err(|e| format!("config parse failed: {e}"))?;
+        let rendered = toml::to_string(&table).map_err(|e| format!("config parse failed: {e}"))?;
         let updated = toml::from_str::<LustlessConfig>(&rendered)
             .map_err(|e| format!("config parse failed: {e}"))?;
         write_config_atomic(&self.config_path, &rendered)?;
@@ -1021,7 +1034,9 @@ impl DaemonState {
             if let Some(filter_state) = guard(&self.dns_filter).clone() {
                 let effective = updated.dns.fail_closed_when_signed_out
                     && !guard(&self.policy).fail_open_override;
-                filter_state.lock().set_fail_closed_when_signed_out(effective);
+                filter_state
+                    .lock()
+                    .set_fail_closed_when_signed_out(effective);
             }
         }
         *wguard(&self.cfg_live) = updated;
@@ -1142,9 +1157,7 @@ impl Control for DaemonState {
         }
         let cfg = self.config();
         let auth = if cfg.upload.base_url.trim().is_empty() {
-            tracing::warn!(
-                "sign-in: upload.base_url is empty — offline mode, local session only"
-            );
+            tracing::warn!("sign-in: upload.base_url is empty — offline mode, local session only");
             Ok(AuthOutcome::Offline)
         } else {
             authenticate_remote(&cfg.upload.base_url, username, password)
@@ -1237,7 +1250,8 @@ impl Control for DaemonState {
     fn collect_debug(&self) -> Result<(), String> {
         let state = self
             .self_weak
-            .upgrade()
+            .get()
+            .and_then(Weak::upgrade)
             .ok_or_else(|| "daemon not initialized".to_string())?;
         if state.start_diagnostics() {
             Ok(())
@@ -1277,7 +1291,9 @@ impl Control for DaemonState {
             .ok_or_else(|| "update check failed: feed has no recommendation".to_string())?;
         match recommendation {
             "now" | "later" | "none" => Ok(recommendation.to_string()),
-            other => Err(format!("update check failed: invalid recommendation {other}")),
+            other => Err(format!(
+                "update check failed: invalid recommendation {other}"
+            )),
         }
     }
 }
@@ -1296,7 +1312,11 @@ enum AuthOutcome {
 /// `POST <base_url>/v1/auth/signin` with `{username,password}`; maps HTTP
 /// outcomes onto CE's `translateLoginFailure` texts
 /// (`signin-and-settings.md` §3).
-fn authenticate_remote(base_url: &str, username: &str, password: &str) -> Result<AuthOutcome, String> {
+fn authenticate_remote(
+    base_url: &str,
+    username: &str,
+    password: &str,
+) -> Result<AuthOutcome, String> {
     let url = format!("{}/v1/auth/signin", base_url.trim_end_matches('/'));
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
@@ -1367,7 +1387,8 @@ impl DaemonState {
         let flags = {
             let mut s = guard(&settings);
             if s.get_user_info(username).map_err(db_err)?.is_none() {
-                s.set_user_info(&fresh_user_info(username)).map_err(db_err)?;
+                s.set_user_info(&fresh_user_info(username))
+                    .map_err(db_err)?;
             }
             if s.get_dns_filter(username).map_err(db_err)?.is_none() {
                 s.set_dns_filter(&UserDnsFilter::default_for(username))
@@ -1490,7 +1511,7 @@ impl DaemonState {
 /// reply `{"token",…}`); never persisted — `SO_PEERCRED` remains the frame
 /// authorization (§5).
 fn local_session_token() -> String {
-    use rand::Rng;
+    use rand::RngCore;
     let mut bytes = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut bytes);
     ids::to_hex(&bytes)
@@ -1633,7 +1654,7 @@ pub(crate) mod test_util {
         assert_eq!(guard(&queue_b).len(), 1, "B is gone");
         state.unregister_connection(id_a);
 
-        let payload = guard(&queue_a).front().expect("msg").to_payload();
+        let payload = guard(&queue_a).back().expect("msg").to_payload();
         assert_eq!(payload["level"], "info");
         assert_eq!(payload["progress"], 100);
     }
@@ -1642,7 +1663,10 @@ pub(crate) mod test_util {
     fn filter_level_and_override_validation() {
         let ts = test_state();
         let state = &ts.state;
-        assert!(state.set_filter_level("Strong Blocking").is_err(), "no session");
+        assert!(
+            state.set_filter_level("Strong Blocking").is_err(),
+            "no session"
+        );
         state.set_sign_in_uid_hint(1000);
         state.sign_in("alice", "pw").expect("sign-in");
 
@@ -1653,9 +1677,13 @@ pub(crate) mod test_util {
         let err = state.set_filter_level("Everything").expect_err("invalid");
         assert!(err.contains("invalid filter level"), "{err}");
 
-        state.set_override("Example.COM", "block").expect("override");
+        state
+            .set_override("Example.COM", "block")
+            .expect("override");
         state.set_override("example.org", "na").expect("override 2");
-        let err = state.set_override("example.net", "sideways").expect_err("invalid verdict");
+        let err = state
+            .set_override("example.net", "sideways")
+            .expect_err("invalid verdict");
         assert!(err.contains("invalid verdict"), "{err}");
         let err = state.set_override("", "allow").expect_err("empty domain");
         assert!(err.contains("domain"), "{err}");
@@ -1726,8 +1754,14 @@ pub(crate) mod test_util {
 
         let after = state.snapshot();
         assert!(!after.filter.fail_closed, "fail-open override reported");
-        assert!(!after.is_panicked, "is_panicked stays the server flag (false)");
-        assert!(after.filter.health == "healthy", "filter health still reported");
+        assert!(
+            !after.is_panicked,
+            "is_panicked stays the server flag (false)"
+        );
+        assert!(
+            after.filter.health == "healthy",
+            "filter health still reported"
+        );
         assert!(state.policy_state().fail_open_override);
     }
 
@@ -1776,7 +1810,10 @@ pub(crate) mod test_util {
         let root = state.snapshot_for(0);
         assert!(root.signed_in, "root sees the session (§5 root-or-self)");
         let foreign = state.snapshot_for(2000);
-        assert!(!foreign.signed_in, "another uid sees only its own (empty) state");
+        assert!(
+            !foreign.signed_in,
+            "another uid sees only its own (empty) state"
+        );
         assert_eq!(foreign.state, UserState::LoggedOut);
 
         let status = state.status_json();

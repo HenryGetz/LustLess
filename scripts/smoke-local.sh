@@ -59,8 +59,15 @@ target/debug/lustlessctl --config "$STATE/lustless.toml" status >/dev/null 2>&1
 check $? "lustlessctl status"
 target/debug/lustlessctl --config "$STATE/lustless.toml" policy >/dev/null 2>&1
 check $? "lustlessctl policy"
-target/debug/lustlessctl --config "$STATE/lustless.toml" flush --deadline 5 >/dev/null 2>&1
-check $? "lustlessctl flush (0x69 partial-ok contract)"
+# 4b. flush (0x69) is root-only by contract (§5 — prerm runs it as root);
+# unprivileged callers must get the denied envelope, not success.
+if [ "$(id -u)" = "0" ]; then
+  target/debug/lustlessctl --config "$STATE/lustless.toml" flush --deadline 5 >/dev/null 2>&1
+  check $? "lustlessctl flush (root, 0x69)"
+else
+  target/debug/lustlessctl --config "$STATE/lustless.toml" flush --deadline 5 >/dev/null 2>&1
+  [ "$?" != "0" ]; check $? "lustlessctl flush denied for non-root (0x69 root-only)"
+fi
 
 # 5. DNS verdicts on the smoke port (no upstreams configured => fail-closed blocks)
 ANS=$(dig @127.0.0.1 -p "$PORT" blocked.example.test A +short +time=2 +tries=1 2>/dev/null)
@@ -77,10 +84,10 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 3 "http://127.0.0.1:18760/statu
 
 # 8. classifier protocol: hello/result/bye over a synthetic spool transaction
 if [ -x target/debug/lustless-classifier ] && [ -f crates/lustless-classifier/models/manifest.json ]; then
-  target/debug/lustless-classifier --model crates/lustless-classifier/models \
-    --data "$STATE/cl-data" --cache "$STATE/cl-cache" --version smoke --verbose \
+  timeout 8 target/debug/lustless-classifier --model=crates/lustless-classifier/models \
+    --data="$STATE/cl-data" --cache="$STATE/cl-cache" --version=smoke --verbose \
     < /dev/null > "$STATE/cl.out" 2>&1
-  head -1 "$STATE/cl.out" | grep -q '"type":"hello"'
+  grep -q '"type":"hello"' "$STATE/cl.out"
   check $? "classifier emits hello"
 else
   note "SKIP classifier protocol (model bundle not fetched)"

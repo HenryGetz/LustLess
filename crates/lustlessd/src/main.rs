@@ -57,7 +57,10 @@ fn init_logging() {
 
     let info = tracing_subscriber::filter::LevelFilter::INFO;
     match tracing_journald::layer() {
-        Ok(journald) => tracing_subscriber::registry().with(journald).with(info).init(),
+        Ok(journald) => tracing_subscriber::registry()
+            .with(journald)
+            .with(info)
+            .init(),
         Err(err) => {
             eprintln!("lustlessd: journald unavailable ({err}); logging to stderr");
             tracing_subscriber::registry()
@@ -138,21 +141,39 @@ fn checkpoint_outbox(path: &Path) {
             return;
         }
     };
-    match conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get::<_, i64>(0)) {
-        Ok(busy) if busy == 0 => tracing::info!("outbox WAL checkpointed (§6.1)"),
+    match conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+        row.get::<_, i64>(0)
+    }) {
+        Ok(0) => tracing::info!("outbox WAL checkpointed (§6.1)"),
         Ok(busy) => tracing::warn!("outbox WAL checkpoint busy ({busy})"),
         Err(err) => tracing::warn!("outbox WAL checkpoint failed: {err}"),
     }
 }
 
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let config_path = std::env::var_os("LUSTLESS_CONFIG")
+/// Config path precedence: `--config <path>`, then `LUSTLESS_CONFIG`, then the
+/// system default (§9.1).
+fn config_path() -> PathBuf {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--config" {
+            if let Some(value) = args.next() {
+                return PathBuf::from(value);
+            }
+        }
+    }
+    std::env::var_os("LUSTLESS_CONFIG")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/etc/lustless/lustless.toml"));
-    let cfg = Arc::new(LustlessConfig::load(&config_path));
-    ensure_layout(&cfg)?;
+        .unwrap_or_else(|| PathBuf::from("/etc/lustless/lustless.toml"))
+}
 
-    let outbox = Arc::new(Mutex::new(Outbox::open(&outbox_path(&cfg))?));
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let config_path = config_path();
+    let cfg = Arc::new(LustlessConfig::load(&config_path));
+    ensure_layout(&cfg).map_err(|err| format!("stage ensure_layout: {err}"))?;
+
+    let outbox = Arc::new(Mutex::new(
+        Outbox::open(&outbox_path(&cfg)).map_err(|err| format!("stage outbox_open: {err}"))?,
+    ));
     let clock = Arc::new(RwLock::new(ClockAnchor::system()));
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let state = Arc::new(DaemonState::new(
@@ -208,9 +229,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // §10/§12/§13 network services (pinned API): keep a Clone handle for
     // flush_now()/issue_dashboard_token() while run() consumes its own copy.
-    let policy: Arc<dyn PolicyProvider> = Arc::clone(&state);
-    let notifier: Arc<dyn Notifier> = Arc::clone(&state);
-    let control: Arc<dyn Control> = Arc::clone(&state);
+    let policy: Arc<dyn PolicyProvider> = state.clone();
+    let notifier: Arc<dyn Notifier> = state.clone();
+    let control: Arc<dyn Control> = state.clone();
     let net = NetServices::new(
         Arc::clone(&cfg),
         Arc::clone(&state.outbox),

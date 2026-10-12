@@ -76,7 +76,11 @@ pub const STARTUP_TRAY_UNAVAILABLE_BODY: &str =
 /// The §13/A5 no-SNI-host startup announcement, sent once when the agent
 /// comes up without a tray.
 pub fn startup_tray_unavailable() {
-    send("LustLess running", STARTUP_TRAY_UNAVAILABLE_BODY, "dialog-information");
+    send(
+        "LustLess running",
+        STARTUP_TRAY_UNAVAILABLE_BODY,
+        "dialog-information",
+    );
 }
 
 #[cfg(test)]

@@ -177,7 +177,10 @@ mod tests {
     fn timezone_offset_shape() {
         let offset = local_timezone_offset();
         assert_eq!(offset.len(), 6, "offset={offset}");
-        assert!(offset.starts_with('+') || offset.starts_with('-'), "{offset}");
+        assert!(
+            offset.starts_with('+') || offset.starts_with('-'),
+            "{offset}"
+        );
         assert_eq!(&offset[3..4], ":");
     }
 }

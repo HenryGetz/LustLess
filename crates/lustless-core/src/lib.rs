@@ -69,15 +69,15 @@ pub enum CoreError {
     JournalMode(String),
 }
 
-pub mod wire;
-pub mod config;
-pub mod records;
-pub mod db;
-pub mod settings;
-pub mod metrics;
 pub mod clock;
-pub mod policy;
+pub mod config;
+pub mod db;
 pub mod ids;
+pub mod metrics;
+pub mod policy;
+pub mod records;
+pub mod settings;
+pub mod wire;
 
 /// Shared helpers for this crate's unit tests (temp dirs for the SQLite files
 /// required by the testing contract, CONTRACTS §16).

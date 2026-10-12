@@ -103,9 +103,7 @@ struct Inner {
     audit: Arc<uploader::AuditLog>,
     tokens: Arc<tokens::TokenStore>,
     flush_tx: tokio::sync::mpsc::UnboundedSender<uploader::FlushCmd>,
-    flush_rx: tokio::sync::Mutex<
-        Option<tokio::sync::mpsc::UnboundedReceiver<uploader::FlushCmd>>,
-    >,
+    flush_rx: tokio::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<uploader::FlushCmd>>>,
     /// Test-only claim min-age override (production: §6.1's 30 s gate).
     min_age_override: Option<i64>,
 }
@@ -213,8 +211,7 @@ impl NetServices {
             tokens: Arc::clone(&inner.tokens),
             clock: Arc::clone(&inner.clock),
         };
-        let dashboard_server =
-            dashboard::serve(Arc::clone(&inner.cfg), dashboard_state);
+        let dashboard_server = dashboard::serve(Arc::clone(&inner.cfg), dashboard_state);
         tokio::select! {
             _ = uploader_loop => tracing::warn!("uploader loop exited"),
             _ = updater_loop => tracing::warn!("updater loop exited"),
@@ -276,10 +273,8 @@ pub(crate) mod test_mocks {
 
     /// A fresh, isolated temp directory per test.
     pub(crate) fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "lustless-net-test-{}-{name}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("lustless-net-test-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create temp dir");
         dir
@@ -429,11 +424,9 @@ mod tests {
         {
             let uid_dir = dir.join("1000");
             std::fs::create_dir_all(&uid_dir).unwrap();
-            let mut settings = SettingsDb::open(
-                &uid_dir.join("settings.db"),
-                &uid_dir.join("settings.key"),
-            )
-            .unwrap();
+            let mut settings =
+                SettingsDb::open(&uid_dir.join("settings.db"), &uid_dir.join("settings.key"))
+                    .unwrap();
             settings
                 .set_api_credentials(&ApiCredentials {
                     username: "alice".to_string(),
@@ -529,7 +522,8 @@ mod tests {
         // The activity batches went out over the mock with Bearer auth.
         let calls = http.calls.lock().clone();
         assert!(calls.iter().any(|call| {
-            call.url.ends_with("/v2/user/alice/report/activity_log.json")
+            call.url
+                .ends_with("/v2/user/alice/report/activity_log.json")
                 && call.bearer.as_deref() == Some("device-token-alice")
         }));
         assert!(calls
@@ -542,7 +536,9 @@ mod tests {
         // Dashboard tokens come from the same handle (§13).
         let token = net.issue_dashboard_token(1000);
         assert_eq!(token.len(), 64);
-        assert!(token.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
+        assert!(token
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
         assert_eq!(net.inner.tokens.validate(&token, system_unix()), Some(1000));
     }
 

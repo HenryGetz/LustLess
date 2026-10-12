@@ -128,9 +128,9 @@ impl EventTable {
     /// failing the batch (§6.1, `upload-protocol.md` §4).
     fn invalid_predicate(self) -> &'static str {
         match self {
-            EventTable::Logins
-            | EventTable::Circumventions
-            | EventTable::SwitchUsers => "(username IS NULL OR TRIM(username) = '')",
+            EventTable::Logins | EventTable::Circumventions | EventTable::SwitchUsers => {
+                "(username IS NULL OR TRIM(username) = '')"
+            }
             EventTable::DnsActivity => {
                 "(username IS NULL OR TRIM(username) = '' \
                     OR domain IS NULL OR TRIM(domain) = '')"
@@ -275,6 +275,7 @@ impl Outbox {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .mode(0o600)
             .open(path)?;
         std::fs::set_permissions(path, permissions.clone())?;
@@ -487,11 +488,7 @@ impl Outbox {
             placeholders
         );
         let mut stmt = tx.prepare(&read)?;
-        let names: Vec<String> = stmt
-            .column_names()
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let names: Vec<String> = stmt.column_names().into_iter().map(String::from).collect();
         let rows = stmt.query_map(params_from_iter(ids.iter()), |row| {
             row_to_value(row, &names)
         })?;
@@ -579,11 +576,7 @@ impl Outbox {
     pub fn dns_activity_readback(&self, limit: u32) -> Result<Vec<Value>, CoreError> {
         const QUERY: &str = "SELECT domain,process_id,process_name,ip,resolution_type,connection_type,resolution_datacenter,resolution_time_ms,datetime_created FROM dns_activity ORDER BY datetime_created DESC LIMIT ?1";
         let mut stmt = self.conn.prepare(QUERY)?;
-        let names: Vec<String> = stmt
-            .column_names()
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let names: Vec<String> = stmt.column_names().into_iter().map(String::from).collect();
         let rows = stmt.query_map(params![limit], |row| row_to_value(row, &names))?;
         let mut out = Vec::new();
         for row in rows {
@@ -776,13 +769,21 @@ mod tests {
 
         // §4/§6.1: mode 0600 …
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&path).expect("metadata").permissions().mode() & 0o777;
+        let mode = std::fs::metadata(&path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
         assert_eq!(mode, 0o600, "outbox must be 0600");
 
         // … and the outbox stays a *plain* SQLite file (§4 "plain SQLite
         // outbox"): SQLCipher without a key must pass pages through.
         let bytes = std::fs::read(&path).expect("read header");
-        assert_eq!(&bytes[..16], b"SQLite format 3\0", "outbox must be plaintext");
+        assert_eq!(
+            &bytes[..16],
+            b"SQLite format 3\0",
+            "outbox must be plaintext"
+        );
 
         // `db_created_at` seeded once, ISO-8601 UTC (§6.1 evidence).
         let created = outbox
@@ -796,21 +797,34 @@ mod tests {
     #[test]
     fn lifecycle_queued_claim_sent_with_min_age_gate() {
         let (_dir, mut outbox) = open("lifecycle");
-        let id = outbox.insert_dns_activity(&dns_row("example.test")).unwrap();
+        let id = outbox
+            .insert_dns_activity(&dns_row("example.test"))
+            .unwrap();
 
         // Rows are born 'queued' (§6.1).
         assert_eq!(status_of(&outbox, "dns_activity", id), "queued");
 
         // Min-age gate: a fresh row is not claimable (§6.1, 30 s).
         let claim = outbox
-            .claim_batch(EventTable::DnsActivity, DEFAULT_BATCH_LIMIT, DEFAULT_MIN_AGE_SECS)
+            .claim_batch(
+                EventTable::DnsActivity,
+                DEFAULT_BATCH_LIMIT,
+                DEFAULT_MIN_AGE_SECS,
+            )
             .unwrap();
-        assert!(claim.is_empty(), "row younger than the min-age gate claimed");
+        assert!(
+            claim.is_empty(),
+            "row younger than the min-age gate claimed"
+        );
 
         // Backdate past the gate and claim.
         backdate(&outbox, "dns_activity", id, 60);
         let claimed = outbox
-            .claim_batch(EventTable::DnsActivity, DEFAULT_BATCH_LIMIT, DEFAULT_MIN_AGE_SECS)
+            .claim_batch(
+                EventTable::DnsActivity,
+                DEFAULT_BATCH_LIMIT,
+                DEFAULT_MIN_AGE_SECS,
+            )
             .unwrap();
         assert_eq!(claimed.len(), 1);
         let row = &claimed[0];
@@ -820,12 +834,19 @@ mod tests {
         assert_eq!(row.created_at.len(), "YYYY-MM-DD HH:MM:SS".len());
         assert_eq!(row.columns["status"], json!("sending"));
         assert_eq!(row.columns["domain"], json!("example.test"));
-        assert_eq!(row.columns["datetime_created"], json!("2026-10-11T12:00:00Z"));
+        assert_eq!(
+            row.columns["datetime_created"],
+            json!("2026-10-11T12:00:00Z")
+        );
         assert_eq!(status_of(&outbox, "dns_activity", id), "sending");
 
         // Already-claimed rows are not claimable again.
         let again = outbox
-            .claim_batch(EventTable::DnsActivity, DEFAULT_BATCH_LIMIT, DEFAULT_MIN_AGE_SECS)
+            .claim_batch(
+                EventTable::DnsActivity,
+                DEFAULT_BATCH_LIMIT,
+                DEFAULT_MIN_AGE_SECS,
+            )
             .unwrap();
         assert!(again.is_empty());
 
@@ -838,10 +859,16 @@ mod tests {
     #[test]
     fn stale_sending_rows_are_reaped_to_queued() {
         let (_dir, mut outbox) = open("reaper");
-        let id = outbox.insert_dns_activity(&dns_row("example.test")).unwrap();
+        let id = outbox
+            .insert_dns_activity(&dns_row("example.test"))
+            .unwrap();
         backdate(&outbox, "dns_activity", id, 60);
         outbox
-            .claim_batch(EventTable::DnsActivity, DEFAULT_BATCH_LIMIT, DEFAULT_MIN_AGE_SECS)
+            .claim_batch(
+                EventTable::DnsActivity,
+                DEFAULT_BATCH_LIMIT,
+                DEFAULT_MIN_AGE_SECS,
+            )
             .unwrap();
         assert_eq!(status_of(&outbox, "dns_activity", id), "sending");
 
@@ -862,7 +889,11 @@ mod tests {
 
         // The reaped row is claimable again (crash-retry path, §6.1).
         let claimed = outbox
-            .claim_batch(EventTable::DnsActivity, DEFAULT_BATCH_LIMIT, DEFAULT_MIN_AGE_SECS)
+            .claim_batch(
+                EventTable::DnsActivity,
+                DEFAULT_BATCH_LIMIT,
+                DEFAULT_MIN_AGE_SECS,
+            )
             .unwrap();
         assert_eq!(claimed.len(), 1);
     }
@@ -878,7 +909,11 @@ mod tests {
         backdate(&outbox, "dns_activity", good_id, 60);
 
         let claimed = outbox
-            .claim_batch(EventTable::DnsActivity, DEFAULT_BATCH_LIMIT, DEFAULT_MIN_AGE_SECS)
+            .claim_batch(
+                EventTable::DnsActivity,
+                DEFAULT_BATCH_LIMIT,
+                DEFAULT_MIN_AGE_SECS,
+            )
             .unwrap();
         assert_eq!(claimed.len(), 2);
 
@@ -895,11 +930,16 @@ mod tests {
         assert_eq!(status_of(&outbox, "dns_activity", good_id), "sending");
 
         // The valid record still acks normally.
-        outbox.mark_sent(EventTable::DnsActivity, &[good_id]).unwrap();
+        outbox
+            .mark_sent(EventTable::DnsActivity, &[good_id])
+            .unwrap();
         assert_eq!(status_of(&outbox, "dns_activity", good_id), "sent");
 
         // Empty ids are a no-op.
-        assert_eq!(outbox.drop_invalid(EventTable::DnsActivity, &[]).unwrap(), 0);
+        assert_eq!(
+            outbox.drop_invalid(EventTable::DnsActivity, &[]).unwrap(),
+            0
+        );
         assert_eq!(outbox.mark_sent(EventTable::DnsActivity, &[]).unwrap(), 0);
     }
 
@@ -1029,10 +1069,17 @@ mod tests {
         // The telemetry table claims/acks through the same lifecycle.
         backdate(&outbox, "telemetry", telemetry_id, 60);
         let claimed = outbox
-            .claim_batch(EventTable::Telemetry, DEFAULT_BATCH_LIMIT, DEFAULT_MIN_AGE_SECS)
+            .claim_batch(
+                EventTable::Telemetry,
+                DEFAULT_BATCH_LIMIT,
+                DEFAULT_MIN_AGE_SECS,
+            )
             .unwrap();
         assert_eq!(claimed.len(), 1);
-        assert_eq!(claimed[0].username, None, "telemetry has no username column");
+        assert_eq!(
+            claimed[0].username, None,
+            "telemetry has no username column"
+        );
         assert_eq!(claimed[0].columns["value"], json!("42"));
         outbox
             .mark_sent(EventTable::Telemetry, &[telemetry_id])

@@ -13,9 +13,9 @@
 # Runnable from anywhere; paths resolve relative to the repo root. Output:
 #   ./lustless_0.1.0_amd64.deb
 #
-# Model bundle: drop the classifier model bundle (manifest.json +
-# content-addressed artifacts, CONTRACTS §7) into models/ at the repo root
-# before building; it is packaged as /usr/share/lustless/models/. Without
+# Model bundle: staged automatically from crates/lustless-classifier/models
+# (populated by fetch-model.sh from the CE bundle artifacts, AUTHORIZATION.md);
+# it is packaged as /usr/share/lustless/models/. Without
 # it the package still builds — screen accountability needs the bundle at
 # runtime (see packaging/README.md). No placeholder artifacts are shipped.
 set -euo pipefail
@@ -62,14 +62,26 @@ apt-get install -y --no-install-recommends \
     build-essential curl ca-certificates pkg-config \
     libgtk-3-dev libayatana-appindicator3-dev \
     libssl-dev libsecret-1-dev \
-    libx11-dev libxext-dev libxrandr-dev
-if [ ! -x "$CARGO_HOME/bin/cargo" ]; then
+    libx11-dev libxext-dev libxrandr-dev \
+    libpipewire-0.3-dev libclang-dev
+if [ ! -x "$CARGO_HOME/bin/rustup" ]; then
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --profile minimal --default-toolchain stable
 fi
+"$CARGO_HOME/bin/rustup" toolchain install stable --profile minimal
+"$CARGO_HOME/bin/rustup" default stable
 export PATH="$CARGO_HOME/bin:$PATH"
 rustc --version
-cargo build --release
+# The release build ships WITHOUT the Wayland portal backend by default (the
+# glibc-2.35 base carries pipewire 0.3.x headers, which pipewire-rs 0.10 cannot
+# bind); X11 capture is complete everywhere and Wayland sessions fall back to
+# X11/XWayland root capture with a journal warning. Set LUSTLESS_WAYLAND=1 on a
+# pipewire-1.x build host to include the portal backend.
+if [ "${LUSTLESS_WAYLAND:-0}" = "1" ]; then
+    cargo build --release
+else
+    cargo build --release --no-default-features
+fi
 DOCKER_EOF
 fi
 
@@ -90,10 +102,16 @@ install -D -m 0755 "$release_dir/lustless-classifier" "$stage/usr/bin/lustless-c
 install -D -m 0755 "$release_dir/lustless-agent"     "$stage/usr/bin/lustless-agent"
 install -D -m 0755 "$release_dir/lustlessctl"        "$stage/usr/bin/lustlessctl"
 
-# Model bundle (§4/§7) — optional; no placeholders (see header).
+# Model bundle (§4/§7) — auto-staged from the classifier crate's fetch script.
 install -d -m 0755 "$stage/usr/share/lustless/models"
-if [ -d "$repo_root/models" ]; then
-    cp -a "$repo_root/models/." "$stage/usr/share/lustless/models/"
+model_src="$repo_root/crates/lustless-classifier/models"
+if [ ! -f "$model_src/manifest.json" ] && [ -x "$repo_root/crates/lustless-classifier/fetch-model.sh" ]; then
+    echo "build-deb.sh: staging model bundle via fetch-model.sh"
+    "$repo_root/crates/lustless-classifier/fetch-model.sh"
+fi
+if [ -f "$model_src/manifest.json" ]; then
+    cp -a "$model_src/." "$stage/usr/share/lustless/models/"
+    rm -f "$stage/usr/share/lustless/models/.gitignore"
     find "$stage/usr/share/lustless/models" -type d -exec chmod 0755 {} +
     find "$stage/usr/share/lustless/models" -type f -exec chmod 0644 {} +
 else
@@ -124,6 +142,10 @@ done
 # Sample system config (conffile)
 install -D -m 0644 "$repo_root/packaging/etc/lustless.toml" \
     "$stage/etc/lustless/lustless.toml"
+
+# Pixmap (Icon: field in DEBIAN/control; CE logo, see packaging/assets/README.md)
+install -D -m 0644 "$repo_root/packaging/assets/lustless-256.png" \
+    "$stage/usr/share/pixmaps/lustless.png"
 
 # --- DEBIAN/ control area ---------------------------------------------------
 install -m 0644 "$repo_root/packaging/debian/control"   "$stage/DEBIAN/control"

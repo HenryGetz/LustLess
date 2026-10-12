@@ -88,7 +88,13 @@ impl Logger {
             Err(primary_err) => {
                 let (logger, fallback_note) = match Self::open(fallback, verbose) {
                     Ok(logger) => (logger, String::new()),
-                    Err(fallback_err) => (Self::null(verbose), format!("; fallback {fallback} also failed: {fallback_err}")),
+                    Err(fallback_err) => (
+                        Self::null(verbose),
+                        format!(
+                            "; fallback {} also failed: {fallback_err}",
+                            fallback.display()
+                        ),
+                    ),
                 };
                 logger.log(
                     Level::Warn,
@@ -124,11 +130,6 @@ impl Logger {
     /// The log file path in use.
     pub fn log_path(&self) -> &Path {
         &self.log_path
-    }
-
-    /// Whether debug-level records are emitted.
-    pub fn verbose(&self) -> bool {
-        self.verbose
     }
 
     /// Emit one record to both sinks.

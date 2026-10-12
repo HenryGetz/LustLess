@@ -38,7 +38,10 @@ pub struct Attribution {
 
 impl Default for Attribution {
     fn default() -> Self {
-        Self { process_id: UNKNOWN_PROCESS_ID, process_name: UNKNOWN_PROCESS_NAME.to_string() }
+        Self {
+            process_id: UNKNOWN_PROCESS_ID,
+            process_name: UNKNOWN_PROCESS_NAME.to_string(),
+        }
     }
 }
 
@@ -63,7 +66,9 @@ const CACHE_CAPACITY: usize = 1024;
 impl NetlinkProcDiag {
     /// Build the production lookup backend.
     pub fn new() -> Self {
-        Self { cache: EngineMutex::new(HashMap::new()) }
+        Self {
+            cache: EngineMutex::new(HashMap::new()),
+        }
     }
 }
 
@@ -148,8 +153,10 @@ const INET_DIAG_MSG_LEN: usize = 72;
 /// Offset of `idiag_inode` inside `struct inet_diag_msg`.
 const INODE_OFFSET: usize = 68;
 /// Kernel netlink I/O timeout so a wedged netlink can never hang a query.
-const NETLINK_IO_TIMEOUT: libc::timeval =
-    libc::timeval { tv_sec: 2, tv_usec: 0 };
+const NETLINK_IO_TIMEOUT: libc::timeval = libc::timeval {
+    tv_sec: 2,
+    tv_usec: 0,
+};
 
 struct FdGuard(libc::c_int);
 
@@ -162,7 +169,11 @@ impl Drop for FdGuard {
 /// Serializes one `SOCK_DIAG_BY_FAMILY` dump request for the UDP socket bound
 /// to `port` on `local`.
 pub(crate) fn build_inet_diag_request(port: u16, local: IpAddr) -> Vec<u8> {
-    let family: u8 = if local.is_ipv4() { libc::AF_INET as u8 } else { libc::AF_INET6 as u8 };
+    let family: u8 = if local.is_ipv4() {
+        libc::AF_INET as u8
+    } else {
+        libc::AF_INET6 as u8
+    };
     // struct inet_diag_sockid: sport(2) dport(2) src(16) dst(16) if(4) cookie(8).
     let mut sockid = [0u8; 48];
     sockid[0..2].copy_from_slice(&port.to_be_bytes());
@@ -286,7 +297,12 @@ fn query_udp_socket_inode(port: u16, local: IpAddr) -> std::io::Result<Option<u3
     let mut buffer = [0u8; 8192];
     loop {
         let received = unsafe {
-            libc::recv(fd, buffer.as_mut_ptr() as *mut libc::c_void, buffer.len(), 0)
+            libc::recv(
+                fd,
+                buffer.as_mut_ptr() as *mut libc::c_void,
+                buffer.len(),
+                0,
+            )
         };
         if received < 0 {
             return Err(std::io::Error::last_os_error());
@@ -352,7 +368,11 @@ mod tests {
     /// Serializes a netlink reply payload containing one `inet_diag_msg`.
     fn inet_diag_reply(sport: u16, local: IpAddr, inode: u32) -> Vec<u8> {
         let mut msg = vec![0u8; INET_DIAG_MSG_LEN];
-        msg[0] = if local.is_ipv4() { libc::AF_INET as u8 } else { libc::AF_INET6 as u8 };
+        msg[0] = if local.is_ipv4() {
+            libc::AF_INET as u8
+        } else {
+            libc::AF_INET6 as u8
+        };
         msg[4..6].copy_from_slice(&sport.to_be_bytes());
         match local {
             IpAddr::V4(a) => msg[8..12].copy_from_slice(&a.octets()),
@@ -385,9 +405,18 @@ mod tests {
     fn request_wire_shape() {
         let v4 = build_inet_diag_request(0xC001, "127.0.0.2".parse().unwrap());
         assert_eq!(v4.len(), 16 + 56);
-        assert_eq!(u32::from_le_bytes(v4[0..4].try_into().unwrap()) as usize, v4.len());
-        assert_eq!(u16::from_le_bytes(v4[4..6].try_into().unwrap()), SOCK_DIAG_BY_FAMILY);
-        assert_eq!(u16::from_le_bytes(v4[6..8].try_into().unwrap()), NLM_F_REQUEST_DUMP);
+        assert_eq!(
+            u32::from_le_bytes(v4[0..4].try_into().unwrap()) as usize,
+            v4.len()
+        );
+        assert_eq!(
+            u16::from_le_bytes(v4[4..6].try_into().unwrap()),
+            SOCK_DIAG_BY_FAMILY
+        );
+        assert_eq!(
+            u16::from_le_bytes(v4[6..8].try_into().unwrap()),
+            NLM_F_REQUEST_DUMP
+        );
         assert_eq!(v4[16], libc::AF_INET as u8);
         assert_eq!(v4[17], libc::IPPROTO_UDP as u8);
         // idiag_states (all states, LE) between the fixed prefix and the sockid.
@@ -487,8 +516,14 @@ mod tests {
     #[test]
     fn attribution_gracefully_degrades_to_unknown() {
         let local: IpAddr = "127.0.0.2".parse().unwrap();
-        assert_eq!(fake(Ownership::Missing).attribute(1, local), Attribution::default());
-        assert_eq!(fake(Ownership::Denied).attribute(1, local), Attribution::default());
+        assert_eq!(
+            fake(Ownership::Missing).attribute(1, local),
+            Attribution::default()
+        );
+        assert_eq!(
+            fake(Ownership::Denied).attribute(1, local),
+            Attribution::default()
+        );
         // Nonsense owners are also normalized to the default.
         assert_eq!(
             fake(Ownership::Found(0, "x".to_string())).attribute(1, local),

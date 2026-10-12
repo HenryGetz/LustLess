@@ -9,11 +9,7 @@ use lustless_core::wire::Code;
 
 /// The CE blocking-level vocabulary of §9 `filter.level` (the same strings
 /// the daemon accepts on IPC 0x63).
-pub const FILTER_LEVELS: [&str; 3] = [
-    "Standard Blocking",
-    "Strong Blocking",
-    "Blocking Enabled",
-];
+pub const FILTER_LEVELS: [&str; 3] = ["Standard Blocking", "Strong Blocking", "Blocking Enabled"];
 
 /// One menu action.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +46,7 @@ impl Action {
     /// `SignIn`/`SwitchUser` return an empty placeholder payload — the
     /// caller fills `{"username","password"}` from the GTK dialog at click
     /// time (§5 0x65).
+    #[allow(dead_code)] // §5 mapping the tests pin; handle_action dispatches inline
     pub fn wire_request(&self) -> Option<(Code, Value)> {
         match self {
             Action::SignIn | Action::SwitchUser => Some((Code::SignIn, json!({}))),
@@ -170,9 +167,18 @@ mod tests {
             (&Action::SignOut, Some(Code::SignOut)),
             (&Action::OpenDashboard, Some(Code::StatusGet)),
             (&Action::ViewActivity, Some(Code::StatusGet)),
-            (&Action::SetFilterLevel("Standard Blocking"), Some(Code::FilterSetLevel)),
-            (&Action::SetFilterLevel("Strong Blocking"), Some(Code::FilterSetLevel)),
-            (&Action::SetFilterLevel("Blocking Enabled"), Some(Code::FilterSetLevel)),
+            (
+                &Action::SetFilterLevel("Standard Blocking"),
+                Some(Code::FilterSetLevel),
+            ),
+            (
+                &Action::SetFilterLevel("Strong Blocking"),
+                Some(Code::FilterSetLevel),
+            ),
+            (
+                &Action::SetFilterLevel("Blocking Enabled"),
+                Some(Code::FilterSetLevel),
+            ),
             (&Action::RefreshSettings, Some(Code::UserSettingsChange)),
             (&Action::CollectDiagnostics, Some(Code::CollectDebugLogs)),
             (&Action::CheckForUpdates, Some(Code::UpdateCheck)),
@@ -215,7 +221,10 @@ mod tests {
         assert!(
             entries.iter().any(|entry| matches!(
                 entry,
-                MenuEntry::Submenu { label: "Set filter level", .. }
+                MenuEntry::Submenu {
+                    label: "Set filter level",
+                    ..
+                }
             )),
             "missing the filter-level submenu"
         );

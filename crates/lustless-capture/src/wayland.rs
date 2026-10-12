@@ -27,18 +27,19 @@ use ashpd::desktop::screencast::{
     CursorMode, OpenPipeWireRemoteOptions, Screencast, SelectSourcesOptions, SourceType,
 };
 use image::{Rgb, RgbImage};
-use pipewire::channel::Channel;
 use pipewire::channel::Sender as PwSender;
 use pipewire::context::ContextRc;
 use pipewire::main_loop::MainLoopRc;
-use pipewire::properties;
+use pipewire::properties::properties;
 use pipewire::spa::param::format::{FormatProperties, MediaSubtype, MediaType};
 use pipewire::spa::param::video::{VideoFormat, VideoInfoRaw};
 use pipewire::spa::param::ParamType;
-use pipewire::spa::pod::{object, property, ChoiceValue, Object as PodObject, Pod, PropertyFlags};
-use pipewire::spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Fraction, Rectangle, SpaTypes};
+use pipewire::spa::pod::serialize::PodSerializer;
+use pipewire::spa::pod::{object, property, ChoiceValue, Object as PodObject, Pod, Value};
+use pipewire::spa::utils::{
+    Choice, ChoiceEnum, ChoiceFlags, Direction, Fraction, Id, Rectangle, SpaTypes,
+};
 use pipewire::stream::{StreamFlags, StreamListener, StreamRc};
-use pipewire::utils::Direction;
 
 use crate::manifest::Rect;
 use crate::{Capture, CaptureBackend, CaptureError, CapturedApp, CapturedMonitor};
@@ -52,12 +53,21 @@ pub struct WaylandBackend {
     state: Option<SessionState>,
 }
 
+/// One portal-reported stream: (node_id, optional size, optional position).
+type PortalStream = (u32, Option<(u32, u32)>, Option<(i32, i32)>);
+
 /// Everything owned by one live ScreenCast session.
 struct SessionState {
+    /// Held, not read: dropping `Screencast` closes the portal session and
+    /// dropping `Session` releases the D-Bus ScreenCast connection; the
+    /// capture loop only needs the PipeWire side after setup.
+    #[allow(dead_code)]
     portal: Screencast,
-    session: ashpd::desktop::Session<ashpd::desktop::screencast::IsScreencastSession>,
-    /// Streams reported by the portal: (node_id, optional size, optional position).
-    streams: Vec<(u32, Option<(u32, u32)>, Option<(i32, i32)>)>,
+    /// See `portal`: session lifetime is the point of this field.
+    #[allow(dead_code)]
+    session: ashpd::desktop::Session<Screencast>,
+    /// Streams reported by the portal (see [`PortalStream`]).
+    streams: Vec<PortalStream>,
     thread: JoinHandle<()>,
     commands: PwSender<LoopCommand>,
     shared: Arc<Shared>,
@@ -94,6 +104,7 @@ enum WireFormat {
     Rgb,
 }
 
+#[derive(Clone)]
 struct WireFrame {
     data: Vec<u8>,
     width: u32,
@@ -129,79 +140,81 @@ impl WaylandBackend {
 
     /// Establish the portal session and the PipeWire loop thread (idempotent).
     async fn ensure_session(&mut self) -> Result<&mut SessionState, CaptureError> {
-        if self.state.is_some() {
-            return Ok(self.state.as_mut().expect("checked above"));
-        }
-        let portal = Screencast::new()
-            .await
-            .map_err(|e| CaptureError::Portal(format!("Screencast::new: {e}")))?;
-        let session = portal
-            .create_session(Default::default())
-            .await
-            .map_err(|e| CaptureError::Portal(format!("create_session: {e}")))?;
-        portal
-            .select_sources(
-                &session,
-                SelectSourcesOptions::default()
-                    .set_sources(SourceType::Monitor)
-                    .set_cursor_mode(CursorMode::Embedded)
-                    .set_multiple(true),
-            )
-            .await
-            .map_err(|e| CaptureError::Portal(format!("select_sources: {e}")))?;
-        let streams = portal
-            .start(&session, None, Default::default())
-            .await
-            .map_err(|e| CaptureError::Portal(format!("start: {e}")))?
-            .response()
-            .map_err(|e| CaptureError::Portal(format!("start response: {e}")))?
-            .streams()
-            .iter()
-            .map(|stream| {
-                (
-                    stream.pipe_wire_node_id(),
-                    stream.size().map(|size| (size.width(), size.height())),
-                    stream.position().map(|pos| (pos.x(), pos.y())),
+        if self.state.is_none() {
+            let portal = Screencast::new()
+                .await
+                .map_err(|e| CaptureError::Portal(format!("Screencast::new: {e}")))?;
+            let session = portal
+                .create_session(Default::default())
+                .await
+                .map_err(|e| CaptureError::Portal(format!("create_session: {e}")))?;
+            portal
+                .select_sources(
+                    &session,
+                    SelectSourcesOptions::default()
+                        .set_sources(Some(SourceType::Monitor.into()))
+                        .set_cursor_mode(CursorMode::Embedded)
+                        .set_multiple(true),
                 )
-            })
-            .collect::<Vec<_>>();
-        if streams.is_empty() {
-            return Err(CaptureError::NoSource(
-                "ScreenCast returned no streams (selection denied or no outputs)".into(),
-            ));
-        }
-        let pw_fd = portal
-            .open_pipe_wire_remote(&session, OpenPipeWireRemoteOptions::default())
-            .await
-            .map_err(|e| CaptureError::Portal(format!("open_pipe_wire_remote: {e}")))?;
-        // Transfer the raw fd into a std OwnedFd without an extra dup.
-        let owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(pw_fd.into_raw_fd()) };
+                .await
+                .map_err(|e| CaptureError::Portal(format!("select_sources: {e}")))?;
+            let streams = portal
+                .start(&session, None, Default::default())
+                .await
+                .map_err(|e| CaptureError::Portal(format!("start: {e}")))?
+                .response()
+                .map_err(|e| CaptureError::Portal(format!("start response: {e}")))?
+                .streams()
+                .iter()
+                .map(|stream| {
+                    (
+                        stream.pipe_wire_node_id(),
+                        stream
+                            .size()
+                            .map(|(width, height)| (width as u32, height as u32)),
+                        stream.position(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            if streams.is_empty() {
+                return Err(CaptureError::NoSource(
+                    "ScreenCast returned no streams (selection denied or no outputs)".into(),
+                ));
+            }
+            let pw_fd = portal
+                .open_pipe_wire_remote(&session, OpenPipeWireRemoteOptions::default())
+                .await
+                .map_err(|e| CaptureError::Portal(format!("open_pipe_wire_remote: {e}")))?;
+            // Transfer the raw fd into a std OwnedFd without an extra dup.
+            let owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(pw_fd.into_raw_fd()) };
 
-        let shared = Arc::new(Shared::default());
-        let (commands, thread) = spawn_pipewire_loop(owned, Arc::clone(&shared))?;
+            let shared = Arc::new(Shared::default());
+            let (commands, thread) = spawn_pipewire_loop(owned, Arc::clone(&shared))?;
 
-        let state = SessionState {
-            portal,
-            session,
-            streams,
-            thread,
-            commands,
-            shared,
-            last_seq: HashMap::new(),
-        };
-        // Ask the loop thread to connect one stream per portal stream.
-        for (node_id, size, _) in &state.streams {
-            let (width, height) = size.unwrap_or((1920, 1080));
-            let _ = state.commands.send(LoopCommand::Connect {
-                node_id: *node_id,
-                name: format!("lustless-capture-{node_id}"),
-                size: (width, height),
-            });
+            let state = SessionState {
+                portal,
+                session,
+                streams,
+                thread,
+                commands,
+                shared,
+                last_seq: HashMap::new(),
+            };
+            // Ask the loop thread to connect one stream per portal stream.
+            for (node_id, size, _) in &state.streams {
+                let (width, height) = size.unwrap_or((1920, 1080));
+                let _ = state.commands.send(LoopCommand::Connect {
+                    node_id: *node_id,
+                    name: format!("lustless-capture-{node_id}"),
+                    size: (width, height),
+                });
+            }
+            log::info!(
+                "capture: wayland ScreenCast session established with {} stream(s)",
+                state.streams.len()
+            );
+            self.state = Some(state);
         }
-        log::info!(
-            "capture: wayland ScreenCast session established with {} stream(s)",
-            state.streams.len()
-        );
         Ok(self.state.as_mut().expect("just inserted"))
     }
 }
@@ -212,7 +225,8 @@ impl CaptureBackend for WaylandBackend {
     ) -> Pin<Box<dyn Future<Output = Result<Capture, CaptureError>> + Send + '_>> {
         Box::pin(async move {
             let state = self.ensure_session().await?;
-            if let Some(err) = state.shared.error.lock().clone() {
+            let loop_error = state.shared.error.lock().clone();
+            if let Some(err) = loop_error {
                 // Compositor/PipeWire died: tear the session down so the next tick
                 // re-establishes it (never a silent no-op).
                 log::error!("capture: pipewire loop failed ({err}), resetting session");
@@ -223,12 +237,11 @@ impl CaptureBackend for WaylandBackend {
 
             let mut capture = Capture::default();
             let mut successes = 0usize;
-            for (index, (node_id, size, position)) in
-                state.streams.clone().into_iter().enumerate()
+            for (index, (node_id, size, position)) in state.streams.clone().into_iter().enumerate()
             {
                 let last = *state.last_seq.get(&node_id).unwrap_or(&0);
-                let frame = match wait_for_frame(&state.shared, node_id, last, FRAME_WAIT) {
-                    Some(frame) => frame,
+                let (seq, frame) = match wait_for_frame(&state.shared, node_id, last, FRAME_WAIT) {
+                    Some(entry) => entry,
                     None => {
                         log::error!(
                             "capture: stream {node_id} delivered no frame within {FRAME_WAIT:?}"
@@ -236,15 +249,15 @@ impl CaptureBackend for WaylandBackend {
                         continue;
                     }
                 };
-                state.last_seq.insert(node_id, frame.seq);
-                let image = match wire_to_rgb(&frame.frame) {
+                state.last_seq.insert(node_id, seq);
+                let image = match wire_to_rgb(&frame) {
                     Ok(image) => image,
                     Err(e) => {
                         log::error!("capture: stream {node_id} frame conversion failed: {e}");
                         continue;
                     }
                 };
-                let (width, height) = size.unwrap_or((frame.frame.width, frame.frame.height));
+                let (width, height) = size.unwrap_or((frame.width, frame.height));
                 let [px, py] = match position {
                     Some((x, y)) => [x, y],
                     None => [0, index as i32 * height as i32],
@@ -353,8 +366,7 @@ fn wait_for_frame(
         if remaining.is_zero() {
             return None;
         }
-        let (guard, _timed_out) = shared.cv.wait_timeout(frames, remaining);
-        frames = guard;
+        let _timed_out = shared.cv.wait_for(&mut frames, remaining);
     }
 }
 
@@ -379,8 +391,8 @@ fn format_pod(size: (u32, u32)) -> PodObject {
             ChoiceValue::Id(Choice(
                 ChoiceFlags::empty(),
                 ChoiceEnum::Enum {
-                    default: formats[0].into(),
-                    alternatives: formats.iter().copied().map(Into::into).collect(),
+                    default: Id(formats[0].as_raw()),
+                    alternatives: formats.iter().map(|f| Id(f.as_raw())).collect(),
                 },
             ))
         ),
@@ -397,11 +409,11 @@ fn format_pod(size: (u32, u32)) -> PodObject {
             ))
         ),
         property!(
-            FormatProperties::Framerate,
+            FormatProperties::VideoFramerate,
             Choice,
             ChoiceValue::Fraction(Choice(
                 ChoiceFlags::empty(),
-                ChoiceEnum::None(Fraction { num: 0, den: 1 }),
+                ChoiceEnum::None(Fraction { num: 0, denom: 1 }),
             ))
         ),
     }
@@ -432,7 +444,7 @@ fn spawn_pipewire_loop(
                     return;
                 }
             };
-            let core = match context.connect_rc(remote_fd, None) {
+            let core = match context.connect_fd_rc(remote_fd, None) {
                 Ok(core) => core,
                 Err(e) => {
                     *thread_shared.error.lock() = Some(format!("connect_fd: {e}"));
@@ -440,13 +452,7 @@ fn spawn_pipewire_loop(
                 }
             };
 
-            let (sender, receiver) = match Channel::mainloop(&mainloop) {
-                Ok(channel) => channel,
-                Err(e) => {
-                    *thread_shared.error.lock() = Some(format!("channel: {e}"));
-                    return;
-                }
-            };
+            let (sender, receiver) = pipewire::channel::channel::<LoopCommand>();
             if ready_tx.send(sender).is_err() {
                 // The capturing thread went away; nothing to serve.
                 return;
@@ -465,7 +471,7 @@ fn spawn_pipewire_loop(
             let _registry_listener = registry
                 .add_listener_local()
                 .global(move |global| {
-                    if global.type_ != pipewire::registry::ObjectType::Node {
+                    if global.type_ != pipewire::types::ObjectType::Node {
                         return;
                     }
                     let Some(props) = global.props else { return };
@@ -476,41 +482,37 @@ fn spawn_pipewire_loop(
                             .get("securityContext")
                             .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("yes"));
                     if restricted {
-                        registry_shared
-                            .restricted
-                            .lock()
-                            .insert(global.id, true);
+                        registry_shared.restricted.lock().insert(global.id, true);
                     }
                 })
                 .register();
 
-            let mut streams: Vec<(StreamRc, StreamListener<StreamUser>)> = Vec::new();
+            let streams: std::cell::RefCell<Vec<(StreamRc, StreamListener<StreamUser>)>> =
+                std::cell::RefCell::new(Vec::new());
             let loop_shared = Arc::clone(&thread_shared);
             let loop_mainloop = mainloop.clone();
             let loop_core = core.clone();
-            let _receiver = receiver
-                .attach(&mainloop.loop_(), move |command| match command {
-                    Some(LoopCommand::Connect {
-                        node_id,
-                        name,
-                        size,
-                    }) => match connect_stream(
+            let _receiver = receiver.attach(mainloop.loop_(), move |command| match command {
+                LoopCommand::Connect {
+                    node_id,
+                    name,
+                    size,
+                } => {
+                    let result = connect_stream(
                         loop_core.clone(),
-                        &mut streams,
+                        &mut streams.borrow_mut(),
                         node_id,
                         &name,
                         size,
                         Arc::clone(&loop_shared),
-                    ) {
-                        Ok(()) => {}
-                        Err(e) => {
-                            *loop_shared.error.lock() =
-                                Some(format!("stream connect {node_id}: {e}"));
-                            loop_mainloop.quit();
-                        }
-                    },
-                    Some(LoopCommand::Quit) | None => mainloop.quit(),
-                });
+                    );
+                    if let Err(e) = result {
+                        *loop_shared.error.lock() = Some(format!("stream connect {node_id}: {e}"));
+                        loop_mainloop.quit();
+                    }
+                }
+                LoopCommand::Quit => loop_mainloop.quit(),
+            });
 
             mainloop.run();
         })
@@ -607,7 +609,15 @@ fn connect_stream(
         .register()
         .map_err(|e| e.to_string())?;
 
-    let mut params: [&[Pod]; 1] = [format_pod(size).as_bytes()];
+    let pod_bytes: Vec<u8> = PodSerializer::serialize(
+        std::io::Cursor::new(Vec::new()),
+        &Value::Object(format_pod(size)),
+    )
+    .map_err(|e| format!("format pod serialization: {e:?}"))?
+    .0
+    .into_inner();
+    let pod = Pod::from_bytes(&pod_bytes).ok_or_else(|| "format pod reparse failed".to_string())?;
+    let mut params = [pod];
     stream
         .connect(
             Direction::Input,

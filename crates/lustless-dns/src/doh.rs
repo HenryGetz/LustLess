@@ -49,8 +49,7 @@ pub const CB_LOCATION_HEADER: &str = "x-cb-location";
 /// Base64url (RFC 4648 §5, no padding) as required by the RFC 8484 §4.1.1
 /// `?dns=` query encoding.
 pub fn base64url_encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     for chunk in input.chunks(3) {
         let b0 = chunk[0] as u32;
@@ -139,7 +138,9 @@ impl DohClient {
         let url = reqwest::Url::parse(endpoint)
             .map_err(|e| crate::DnsError::Config(format!("dns.doh_url {endpoint}: {e}")))?;
         if url.scheme() != "https" {
-            return Err(crate::DnsError::Config(format!("dns.doh_url must be https: {endpoint}")));
+            return Err(crate::DnsError::Config(format!(
+                "dns.doh_url must be https: {endpoint}"
+            )));
         }
         let slot_count = pool_size.clamp(1, MAX_POOL_PER_ENDPOINT);
         let mut slots = Vec::with_capacity(slot_count);
@@ -149,9 +150,15 @@ impl DohClient {
                 .pool_max_idle_per_host(1)
                 .build()
                 .map_err(|e| crate::DnsError::Doh(e.to_string()))?;
-            slots.push(Slot { client, in_flight: Arc::new(AtomicUsize::new(0)) });
+            slots.push(Slot {
+                client,
+                in_flight: Arc::new(AtomicUsize::new(0)),
+            });
         }
-        Ok(Self { endpoint: endpoint.to_string(), slots })
+        Ok(Self {
+            endpoint: endpoint.to_string(),
+            slots,
+        })
     }
 
     /// The configured endpoint URL.
@@ -175,16 +182,26 @@ impl DohClient {
         slot.in_flight.fetch_add(1, Ordering::SeqCst);
         (
             &slot.client,
-            SlotGuard { count: Arc::clone(&slot.in_flight) },
+            SlotGuard {
+                count: Arc::clone(&slot.in_flight),
+            },
         )
     }
 
     /// Test helper: `(least_loaded_index, per_slot_in_flight_counts)`.
     #[cfg(test)]
     fn debug_slot_states(&self) -> (usize, Vec<usize>) {
-        let counts: Vec<usize> =
-            self.slots.iter().map(|s| s.in_flight.load(Ordering::SeqCst)).collect();
-        let idx = counts.iter().enumerate().min_by_key(|(_, c)| **c).map(|(i, _)| i).unwrap_or(0);
+        let counts: Vec<usize> = self
+            .slots
+            .iter()
+            .map(|s| s.in_flight.load(Ordering::SeqCst))
+            .collect();
+        let idx = counts
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, c)| **c)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
         (idx, counts)
     }
 
@@ -295,12 +312,19 @@ impl UserResolver {
             }
             cleaned.push(entry.to_string());
         }
-        Ok(Self { configured: cleaned, listen_ip })
+        Ok(Self {
+            configured: cleaned,
+            listen_ip,
+        })
     }
 
     /// The upstreams the next lookup will try (fresh for `"system"`).
     pub fn upstreams(&self) -> Vec<IpAddr> {
-        if self.configured.iter().all(|e| e.eq_ignore_ascii_case("system")) {
+        if self
+            .configured
+            .iter()
+            .all(|e| e.eq_ignore_ascii_case("system"))
+        {
             if self.configured.is_empty() {
                 return Vec::new();
             }
@@ -335,7 +359,9 @@ impl UserResolver {
             .id();
         let upstreams = self.upstreams();
         if upstreams.is_empty() {
-            return Err(UserLookupError::Transport("no usable upstream resolvers".into()));
+            return Err(UserLookupError::Transport(
+                "no usable upstream resolvers".into(),
+            ));
         }
         let deadline = tokio::time::Instant::now() + PATH_TIMEOUT;
         let mut saw_timeout = false;
@@ -376,7 +402,10 @@ impl UserResolver {
             .connect((upstream, 53))
             .await
             .map_err(|e| UserLookupError::Transport(e.to_string()))?;
-        socket.send(wire).await.map_err(|e| UserLookupError::Transport(e.to_string()))?;
+        socket
+            .send(wire)
+            .await
+            .map_err(|e| UserLookupError::Transport(e.to_string()))?;
         let mut buf = [0u8; 4096];
         let received = tokio::time::timeout(budget, socket.recv(&mut buf))
             .await
@@ -385,7 +414,9 @@ impl UserResolver {
         let response = Message::from_vec(&buf[..received])
             .map_err(|e| UserLookupError::InvalidResponse(e.to_string()))?;
         if response.id() != expected_id || response.message_type() != MessageType::Response {
-            return Err(UserLookupError::InvalidResponse("transaction id/type mismatch".into()));
+            return Err(UserLookupError::InvalidResponse(
+                "transaction id/type mismatch".into(),
+            ));
         }
         Ok(buf[..received].to_vec())
     }
@@ -433,7 +464,11 @@ mod tests {
         // while it is checked out the next acquire moves to slot 1.
         let (_, guard0) = client.acquire();
         assert_eq!(client.debug_slot_states().1[0], 1);
-        assert_eq!(client.debug_slot_states().0, 1, "least-loaded slot while slot 0 is out");
+        assert_eq!(
+            client.debug_slot_states().0,
+            1,
+            "least-loaded slot while slot 0 is out"
+        );
         let (_, guard1) = client.acquire();
         assert_eq!(client.debug_slot_states().1, vec![1, 1, 0, 0, 0]);
         drop(guard0);
@@ -442,7 +477,11 @@ mod tests {
 
         // Load slot 0 artificially; dispatch must move off slot 0.
         client.slots[0].in_flight.fetch_add(3, Ordering::SeqCst);
-        assert_eq!(client.debug_slot_states().0, 1, "loaded slot 0 moves dispatch to slot 1");
+        assert_eq!(
+            client.debug_slot_states().0,
+            1,
+            "loaded slot 0 moves dispatch to slot 1"
+        );
         let (_, guard2) = client.acquire();
         assert_eq!(client.debug_slot_states().1, vec![3, 1, 0, 0, 0]);
         drop(guard2);
@@ -502,11 +541,8 @@ nameserver bogus\n";
     #[test]
     fn explicit_resolvers_are_used_verbatim_and_invalid_entries_rejected() {
         let listen: IpAddr = "127.0.0.2".parse().unwrap();
-        let resolver = UserResolver::new(
-            &["192.0.2.53".into(), "[2001:db8::53]:53".into()],
-            listen,
-        )
-        .unwrap();
+        let resolver =
+            UserResolver::new(&["192.0.2.53".into(), "[2001:db8::53]:53".into()], listen).unwrap();
         assert_eq!(
             resolver.upstreams(),
             vec![
@@ -521,7 +557,10 @@ nameserver bogus\n";
         // Explicit loopback is the daemon operator's choice (kept verbatim);
         // only the "system" path filters it.
         let local = UserResolver::new(&["127.0.0.53".into()], listen).unwrap();
-        assert_eq!(local.upstreams(), vec!["127.0.0.53".parse::<IpAddr>().unwrap()]);
+        assert_eq!(
+            local.upstreams(),
+            vec!["127.0.0.53".parse::<IpAddr>().unwrap()]
+        );
     }
 
     /// A deterministic query/parse round-trip guard for the user path's

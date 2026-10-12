@@ -9,9 +9,14 @@ license = "Apache-2.0"
 name = "lustlessd"
 path = "src/main.rs"
 
+[features]
+default = ["wayland-portal"]
+# Portal-based Wayland capture (needs pipewire 1.x headers at build time).
+wayland-portal = ["lustless-capture/wayland-portal"]
+
 [dependencies]
 lustless-core = { path = "../lustless-core" }
-lustless-capture = { path = "../lustless-capture" }
+lustless-capture = { path = "../lustless-capture", default-features = false }
 lustless-dns = { path = "../lustless-dns" }
 lustless-net = { path = "../lustless-net" }
 

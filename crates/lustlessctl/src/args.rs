@@ -161,7 +161,9 @@ impl Command {
                                 return Err(ParseError::new("--limit must be at least 1"));
                             }
                         }
-                        other => return Err(ParseError::new(format!("unexpected argument: {other}"))),
+                        other => {
+                            return Err(ParseError::new(format!("unexpected argument: {other}")))
+                        }
                     }
                 }
                 Ok(Command::DnsActivity { limit, json })
@@ -224,7 +226,9 @@ impl Command {
                                 )));
                             }
                         }
-                        other => return Err(ParseError::new(format!("unexpected argument: {other}"))),
+                        other => {
+                            return Err(ParseError::new(format!("unexpected argument: {other}")))
+                        }
                     }
                 }
                 Ok(Command::Flush { deadline })
@@ -286,8 +290,12 @@ impl Command {
 fn one_positional(rest: &[String], shape: &str) -> Result<String, ParseError> {
     match rest {
         [only] => Ok(only.clone()),
-        [] => Err(ParseError::new(format!("missing argument — expected {shape}"))),
-        _ => Err(ParseError::new(format!("too many arguments — expected {shape}"))),
+        [] => Err(ParseError::new(format!(
+            "missing argument — expected {shape}"
+        ))),
+        _ => Err(ParseError::new(format!(
+            "too many arguments — expected {shape}"
+        ))),
     }
 }
 
@@ -399,7 +407,11 @@ mod tests {
             (&["--version"], Command::Version),
         ];
         for (args, expected) in cases {
-            assert_eq!(&parse(args).expect(&args.join(" ")), expected, "{args:?}");
+            assert_eq!(
+                &parse(args).unwrap_or_else(|_| panic!("{}", args.join(" "))),
+                expected,
+                "{args:?}"
+            );
         }
     }
 
@@ -411,7 +423,10 @@ mod tests {
             "the §11 prerm contract is `timeout 10 lustlessctl flush`"
         );
         assert_eq!(
-            Command::Flush { deadline: DEFAULT_FLUSH_DEADLINE_SECS }.wire_request(),
+            Command::Flush {
+                deadline: DEFAULT_FLUSH_DEADLINE_SECS
+            }
+            .wire_request(),
             Some((Code::FlushOutbox, serde_json::json!({"deadline_sec": 10})))
         );
     }
@@ -452,7 +467,10 @@ mod tests {
             (&["status"], Code::StatusGet),
             (&["policy"], Code::PolicyGet),
             (&["dns-activity"], Code::DnsActivityQuery),
-            (&["set-filter-level", "Standard Blocking"], Code::FilterSetLevel),
+            (
+                &["set-filter-level", "Standard Blocking"],
+                Code::FilterSetLevel,
+            ),
             (
                 &["set-override", "a.example", "block"],
                 Code::FilterSetOverrides,
@@ -461,21 +479,24 @@ mod tests {
             (&["collect-debug"], Code::CollectDebugLogs),
             (&["update-check"], Code::UpdateCheck),
             (&["flush"], Code::FlushOutbox),
-            (
-                &["break-glass-internal", "why"],
-                Code::BreakGlass,
-            ),
+            (&["break-glass-internal", "why"], Code::BreakGlass),
         ];
         for (args, code) in table {
-            let command = parse(args).expect(&args.join(" "));
+            let command = parse(args).unwrap_or_else(|_| panic!("{}", args.join(" ")));
             let (actual, _) = command
                 .wire_request()
                 .unwrap_or_else(|| panic!("{args:?} has no plain wire request"));
             assert_eq!(actual, *code, "{args:?}");
         }
         // Connection-scope codes of §5 stay client-side assembled.
-        assert!(parse(&["signin", "alice"]).unwrap().wire_request().is_none());
-        assert!(parse(&["break-glass", "why"]).unwrap().wire_request().is_none());
+        assert!(parse(&["signin", "alice"])
+            .unwrap()
+            .wire_request()
+            .is_none());
+        assert!(parse(&["break-glass", "why"])
+            .unwrap()
+            .wire_request()
+            .is_none());
         assert!(parse(&["config", "show"]).unwrap().wire_request().is_none());
     }
 
@@ -483,25 +504,30 @@ mod tests {
     fn wire_payloads_carry_the_contract_fields() {
         use serde_json::json;
         assert_eq!(
-            parse(&["dns-activity", "--limit", "9"]).unwrap().wire_request(),
+            parse(&["dns-activity", "--limit", "9"])
+                .unwrap()
+                .wire_request(),
             Some((Code::DnsActivityQuery, json!({"limit": 9})))
         );
         assert_eq!(
-            parse(&["set-filter-level", "Blocking Enabled"]).unwrap().wire_request(),
-            Some((
-                Code::FilterSetLevel,
-                json!({"level": "Blocking Enabled"})
-            ))
+            parse(&["set-filter-level", "Blocking Enabled"])
+                .unwrap()
+                .wire_request(),
+            Some((Code::FilterSetLevel, json!({"level": "Blocking Enabled"})))
         );
         assert_eq!(
-            parse(&["set-override", "news.example", "allow"]).unwrap().wire_request(),
+            parse(&["set-override", "news.example", "allow"])
+                .unwrap()
+                .wire_request(),
             Some((
                 Code::FilterSetOverrides,
                 json!({"domain": "news.example", "verdict": "allow"})
             ))
         );
         assert_eq!(
-            parse(&["break-glass-internal", "dns outage"]).unwrap().wire_request(),
+            parse(&["break-glass-internal", "dns outage"])
+                .unwrap()
+                .wire_request(),
             Some((Code::BreakGlass, json!({"reason": "dns outage"})))
         );
     }

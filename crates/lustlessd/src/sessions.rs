@@ -330,10 +330,15 @@ async fn watch_session(
     // Initial reads; with `CacheProperties::Lazily` (zbus default) they also
     // prime the cache the property-change streams below consume.
     let mut active = proxy.get_property::<bool>("Active").await.unwrap_or(false);
-    let mut unlocked = !proxy.get_property::<bool>("LockedHint").await.unwrap_or(true);
+    let mut unlocked = !proxy
+        .get_property::<bool>("LockedHint")
+        .await
+        .unwrap_or(true);
     registry.upsert(&path, uid, active, unlocked);
     update_active_hint(&registry, &state);
-    tracing::debug!("logind: watching session {path} (uid {uid}, active {active}, unlocked {unlocked})");
+    tracing::debug!(
+        "logind: watching session {path} (uid {uid}, active {active}, unlocked {unlocked})"
+    );
 
     let mut lock_stream = match proxy.receive_signal("Lock").await {
         Ok(stream) => stream,
@@ -454,7 +459,11 @@ mod tests {
 
         // Multi-session: a second session can unblock the gate.
         let registry = registry_with(&[("s1", 1000, false, false), ("s2", 1000, true, true)]);
-        assert_eq!(registry.gate(1000), None, "any active+unlocked session wins");
+        assert_eq!(
+            registry.gate(1000),
+            None,
+            "any active+unlocked session wins"
+        );
 
         // Multi-session: all active ones locked → locked, not inactive.
         let registry = registry_with(&[("s1", 1000, true, false), ("s2", 1000, false, true)]);
@@ -496,7 +505,9 @@ mod tests {
 
     #[test]
     fn session_signal_body_tolerates_either_argument_order() {
-        let path: OwnedObjectPath = "/org/freedesktop/login1/session/c2".try_into().expect("path");
+        let path: OwnedObjectPath = "/org/freedesktop/login1/session/c2"
+            .try_into()
+            .expect("path");
         // (id, path) — the documented systemd shape.
         let msg_a = zbus::Message::method_call("/org/freedesktop/login1", "SessionNew")
             .expect("builder")

@@ -27,11 +27,11 @@ use std::time::Duration;
 use image::imageops;
 use image::RgbImage;
 use lustless_capture::manifest::{Rect, ScreenstateManifest};
-use lustless_capture::spool::{self, SpoolWatcher, SpoolError, READY_MARKER};
+use lustless_capture::spool::{self, SpoolError, SpoolWatcher, READY_MARKER};
 
 use crate::bundles::{self, LastResult};
 use crate::logging::Logger;
-use crate::scoring::{ImageScorer, ScoreError};
+use crate::scoring::{ScoreError, WindowScorer};
 use crate::{now_ts, Message, ResultSummary, ScoredWindow};
 
 /// inotify poll cadence — bounds the SIGTERM reaction time while idle.
@@ -64,11 +64,11 @@ pub enum ConsumerError {
 ///
 /// Folder-shape problems (missing/unreadable manifest, unreadable images)
 /// degrade to a logged, empty or partial batch — they are consumed either
-/// way so the daemon can resolve them. Only ONNX inference errors propagate
+/// way so the daemon can resolve them. Only scoring errors propagate
 /// (fatal).
 pub fn score_transaction(
     folder: &Path,
-    scorer: &mut dyn ImageScorer,
+    scorer: &mut dyn WindowScorer,
     logger: &Logger,
 ) -> Result<Message, ScoreError> {
     let folder_name = folder
@@ -135,7 +135,7 @@ pub fn score_transaction(
             );
             continue;
         };
-        let score = scorer.score_image(&crop)?;
+        let score = scorer.score_window(&crop, &app.window_title)?;
         windows.push(ScoredWindow {
             app: app.name.clone(),
             title: app.window_title.clone(),
@@ -224,7 +224,7 @@ fn select_crop(app_rect: Rect, images: &[(Rect, RgbImage)]) -> Option<RgbImage> 
 pub struct Consumer<'a> {
     cache_dir: PathBuf,
     watcher: SpoolWatcher,
-    scorer: &'a mut dyn ImageScorer,
+    scorer: &'a mut dyn WindowScorer,
     logger: &'a Logger,
     shutdown: &'a AtomicBool,
 }
@@ -235,7 +235,7 @@ impl<'a> Consumer<'a> {
     pub fn new(
         data_dir: &Path,
         cache_dir: &Path,
-        scorer: &'a mut dyn ImageScorer,
+        scorer: &'a mut dyn WindowScorer,
         logger: &'a Logger,
         shutdown: &'a AtomicBool,
     ) -> Result<Self, ConsumerError> {
@@ -379,11 +379,12 @@ mod tests {
     use lustless_capture::spool::TransactionWriter;
     use std::collections::VecDeque;
 
-    /// Deterministic scorer: returns queued scores and records the crops it
-    /// was handed (no ONNX session in tests).
+    /// Deterministic scorer: returns queued scores and records the crops +
+    /// titles it was handed (no model session in tests).
     struct FakeScorer {
         scores: VecDeque<f64>,
         seen_dims: Vec<(u32, u32)>,
+        seen_titles: Vec<String>,
         threshold: f64,
     }
 
@@ -392,14 +393,20 @@ mod tests {
             Self {
                 scores: scores.iter().copied().collect(),
                 seen_dims: Vec::new(),
+                seen_titles: Vec::new(),
                 threshold: 0.8,
             }
         }
     }
 
-    impl ImageScorer for FakeScorer {
-        fn score_image(&mut self, image: &RgbImage) -> Result<f64, ScoreError> {
+    impl WindowScorer for FakeScorer {
+        fn score_window(
+            &mut self,
+            image: &RgbImage,
+            window_title: &str,
+        ) -> Result<f64, ScoreError> {
             self.seen_dims.push((image.width(), image.height()));
+            self.seen_titles.push(window_title.to_string());
             Ok(self.scores.pop_front().unwrap_or(0.0))
         }
 
@@ -487,8 +494,9 @@ mod tests {
         assert!(!windows[1].flagged, "0.3 < 0.8");
 
         // Crop geometry: 3×3 intersection for Browser, full-frame 8×8
-        // fallback for the off-screen Ghost.
+        // fallback for the off-screen Ghost; titles ride along.
         assert_eq!(scorer.seen_dims, vec![(3, 3), (8, 8)]);
+        assert_eq!(scorer.seen_titles, vec!["Clip", "Offscreen"]);
 
         assert_eq!(
             summary,
@@ -506,9 +514,12 @@ mod tests {
     #[test]
     fn unreadable_manifest_degrades_to_an_empty_result_named_after_the_folder() {
         let dir = tempfile::tempdir().unwrap();
-        let folder = dir.path().join("spool").join("tester").join("pdl").join(
-            "2026-10-11T11-59-00.000000",
-        );
+        let folder = dir
+            .path()
+            .join("spool")
+            .join("tester")
+            .join("pdl")
+            .join("2026-10-11T11-59-00.000000");
         fs::create_dir_all(&folder).unwrap();
         fs::write(folder.join(spool::MANIFEST_FILE), b"{broken").unwrap();
         fs::write(folder.join(READY_MARKER), b"").unwrap();
@@ -547,9 +558,8 @@ mod tests {
         let shutdown = AtomicBool::new(false);
         let mut scorer = FakeScorer::new(&[0.9, 0.3]);
 
-        let mut consumer =
-            Consumer::new(&data_dir, &cache_dir, &mut scorer, &logger, &shutdown)
-                .expect("consumer");
+        let mut consumer = Consumer::new(&data_dir, &cache_dir, &mut scorer, &logger, &shutdown)
+            .expect("consumer");
         consumer.process_ready(&folder).expect("processed");
 
         // Consumed: folder gone, control file written.
@@ -576,7 +586,11 @@ mod tests {
         // Inside the right monitor only.
         let crop = select_crop([10, 2, 4, 4], &images).expect("crop");
         assert_eq!((crop.width(), crop.height()), (4, 4));
-        assert_eq!(crop.get_pixel(0, 0).0, [4, 5, 6], "cut from the right image");
+        assert_eq!(
+            crop.get_pixel(0, 0).0,
+            [4, 5, 6],
+            "cut from the right image"
+        );
 
         // Straddling both monitors with equal area: first best wins.
         let crop = select_crop([6, 0, 4, 4], &images).expect("crop");

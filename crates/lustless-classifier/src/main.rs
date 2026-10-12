@@ -19,6 +19,8 @@
 mod bundles;
 mod consumer;
 mod logging;
+mod nlp;
+mod onnx;
 mod scoring;
 
 use std::path::{Path, PathBuf};
@@ -27,7 +29,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use serde::{Deserialize, Serialize};
 
 use logging::Logger;
-use scoring::ImageScorer;
+use scoring::WindowScorer;
 
 /// Primary `<pid>.log` directory (CONTRACTS §4). Falls back to the per-user
 /// `<cache>/logs` via [`Logger::open_or_fallback`] when not writable (tests,
@@ -52,7 +54,8 @@ pub struct ScoredWindow {
     pub title: String,
     /// `[x, y, width, height]` of `apps[].appRect` in virtual-screen coords.
     pub rect: [i32; 4],
-    /// Model score in `0..=1` (P(nsfw), see MODEL.md).
+    /// Spliced ensemble score in `0..=1` (CE linear score / 100 000, see
+    /// MODEL.md).
     pub score: f64,
     /// `score >= threshold`; flagged windows become `circumventions` rows (§7).
     pub flagged: bool,
@@ -257,9 +260,10 @@ extern "C" fn on_signal(sig: libc::c_int) {
 }
 
 fn install_signal_handlers() {
+    let handler: extern "C" fn(libc::c_int) = on_signal;
     unsafe {
-        libc::signal(libc::SIGTERM, on_signal as libc::sighandler_t);
-        libc::signal(libc::SIGINT, on_signal as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, handler as usize as libc::sighandler_t);
+        libc::signal(libc::SIGINT, handler as usize as libc::sighandler_t);
     }
 }
 
@@ -295,7 +299,10 @@ fn main() {
 /// a signal-initiated graceful stop; every fail-closed path returns `1`
 /// *after* emitting `bye {reason}` so the daemon logs why.
 fn run(args: &Args, logger: &Logger) -> i32 {
-    logger.info("classifier", &format!("Command line: {}", args.command_line()));
+    logger.info(
+        "classifier",
+        &format!("Command line: {}", args.command_line()),
+    );
     logger.info(
         "classifier",
         &format!("Classifier v{} is starting", args.version),
@@ -314,7 +321,10 @@ fn run(args: &Args, logger: &Logger) -> i32 {
             ),
         ),
         Ok(None) => {}
-        Err(err) => logger.warn("classifier", &format!("last-result control file unreadable: {err}")),
+        Err(err) => logger.warn(
+            "classifier",
+            &format!("last-result control file unreadable: {err}"),
+        ),
     }
 
     // Fail closed on any missing/corrupt artifact (§7 bundle contract).
@@ -326,10 +336,7 @@ fn run(args: &Args, logger: &Logger) -> i32 {
         "bundles",
         &format!(
             "model bundle v{}: {} ({}, {})",
-            bundle.bundle_version,
-            bundle.model.name,
-            bundle.model.license,
-            bundle.model.source
+            bundle.bundle_version, bundle.model.name, bundle.model.license, bundle.model.source
         ),
     );
     for artifact in bundle.artifacts() {
@@ -468,26 +475,17 @@ mod tests {
 
         // Shape errors: unknown flags, space form, positional, empty value.
         assert!(matches!(parse(&["--bogus=1"]), Err(ArgError::Unknown(_))));
+        assert!(matches!(parse(&["--models=/x"]), Err(ArgError::Unknown(_))));
         assert!(matches!(
-            parse(&["--models=/x"]),
-            Err(ArgError::Unknown(_))
-        ));
-        assert!(matches!(
-            Args::parse(["--model", "/m"]),
+            Args::parse(["--model".to_string(), "/m".to_string()]),
             Err(ArgError::MissingValue(_))
         ));
         assert!(matches!(
-            Args::parse(["/positional"]),
+            Args::parse(["/positional".to_string()]),
             Err(ArgError::UnexpectedPositional(_))
         ));
-        assert!(matches!(
-            parse(&["--model="]),
-            Err(ArgError::EmptyValue(_))
-        ));
-        assert!(matches!(
-            parse(&["--verbose=1"]),
-            Err(ArgError::Unknown(_))
-        ));
+        assert!(matches!(parse(&["--model="]), Err(ArgError::EmptyValue(_))));
+        assert!(matches!(parse(&["--verbose=1"]), Err(ArgError::Unknown(_))));
     }
 
     #[test]

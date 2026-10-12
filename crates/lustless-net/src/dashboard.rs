@@ -181,28 +181,70 @@ async fn status_page(State(state): State<DashboardState>) -> Html<String> {
     row("Account", snapshot.username_or("(signed out)"));
     row("Session state", &format!("{:?}", snapshot.state));
     row("Signed in", if snapshot.signed_in { "yes" } else { "no" });
-    row("Filtering", if snapshot.has_filtering { "yes" } else { "no" });
-    row("DNS filtering", if snapshot.has_dns_filtering { "yes" } else { "no" });
-    row("Accountability", if snapshot.has_accountability { "yes" } else { "no" });
+    row(
+        "Filtering",
+        if snapshot.has_filtering { "yes" } else { "no" },
+    );
+    row(
+        "DNS filtering",
+        if snapshot.has_dns_filtering {
+            "yes"
+        } else {
+            "no"
+        },
+    );
+    row(
+        "Accountability",
+        if snapshot.has_accountability {
+            "yes"
+        } else {
+            "no"
+        },
+    );
     row(
         "Screen accountability",
-        if snapshot.has_screen_accountability { "yes" } else { "no" },
+        if snapshot.has_screen_accountability {
+            "yes"
+        } else {
+            "no"
+        },
     );
     row("Filter level", &snapshot.filter.level);
     row("Filter health", &snapshot.filter.health);
     row(
         "Fail closed (signed out ⇒ web blocked)",
-        if snapshot.filter.fail_closed { "yes" } else { "no — fail-open OVERRIDE ACTIVE" },
+        if snapshot.filter.fail_closed {
+            "yes"
+        } else {
+            "no — fail-open OVERRIDE ACTIVE"
+        },
     );
-    row("Can override blocks", if snapshot.can_override { "yes" } else { "no" });
+    row(
+        "Can override blocks",
+        if snapshot.can_override { "yes" } else { "no" },
+    );
     row("Panicked", if snapshot.is_panicked { "yes" } else { "no" });
-    row("Capture active", if snapshot.capture.active { "yes" } else { "no" });
+    row(
+        "Capture active",
+        if snapshot.capture.active { "yes" } else { "no" },
+    );
     row("Capture backend", &snapshot.capture.backend);
     row(
         "Last screenstate",
-        snapshot.capture.last_screenstate_at.as_deref().unwrap_or("(none)"),
+        snapshot
+            .capture
+            .last_screenstate_at
+            .as_deref()
+            .unwrap_or("(none)"),
     );
-    row("Server-anchored clock", if read_clock(&state.clock).is_server_anchored() { "yes" } else { "no (system time)" });
+    row(
+        "Server-anchored clock",
+        if read_clock(&state.clock).is_server_anchored() {
+            "yes"
+        } else {
+            "no (system time)"
+        },
+    );
     row("Daemon time (UTC)", &now);
     Html(layout(
         "Status",
@@ -222,12 +264,9 @@ async fn sign_in_page(
     Query(params): Query<HashMap<String, String>>,
 ) -> Html<String> {
     let snapshot = state.policy.snapshot();
-    let error = params.get("error").map(|message| {
-        format!(
-            "<p class=\"error\">{}</p>",
-            esc(message)
-        )
-    });
+    let error = params
+        .get("error")
+        .map(|message| format!("<p class=\"error\">{}</p>", esc(message)));
     let body = format!(
         "<h2>Sign in</h2>{}\
          <form method=\"post\" action=\"/sign-in\" class=\"stack\">\
@@ -245,16 +284,18 @@ async fn sign_in_submit(
 ) -> Response {
     match state.control.sign_in(&form.username, &form.password) {
         Ok(_) => Redirect::to("/?notice=signed-in").into_response(),
-        Err(err) => Redirect::to(&format!("/sign-in?error={}", percent_encode(&err)))
-            .into_response(),
+        Err(err) => {
+            Redirect::to(&format!("/sign-in?error={}", percent_encode(&err))).into_response()
+        }
     }
 }
 
 async fn sign_out_submit(State(state): State<DashboardState>) -> Response {
     match state.control.sign_out() {
         Ok(_) => Redirect::to("/?notice=signed-out").into_response(),
-        Err(err) => Redirect::to(&format!("/sign-in?error={}", percent_encode(&err)))
-            .into_response(),
+        Err(err) => {
+            Redirect::to(&format!("/sign-in?error={}", percent_encode(&err))).into_response()
+        }
     }
 }
 
@@ -299,11 +340,15 @@ pub(crate) struct LevelForm {
     level: String,
 }
 
-async fn level_submit(State(state): State<DashboardState>, Form(form): Form<LevelForm>) -> Response {
+async fn level_submit(
+    State(state): State<DashboardState>,
+    Form(form): Form<LevelForm>,
+) -> Response {
     match state.control.set_filter_level(&form.level) {
         Ok(_) => Redirect::to("/settings?notice=saved").into_response(),
-        Err(err) => Redirect::to(&format!("/settings?error={}", percent_encode(&err)))
-            .into_response(),
+        Err(err) => {
+            Redirect::to(&format!("/settings?error={}", percent_encode(&err))).into_response()
+        }
     }
 }
 
@@ -322,8 +367,9 @@ async fn override_submit(
     }
     match state.control.set_override(&form.domain, &form.verdict) {
         Ok(_) => Redirect::to("/settings?notice=saved").into_response(),
-        Err(err) => Redirect::to(&format!("/settings?error={}", percent_encode(&err)))
-            .into_response(),
+        Err(err) => {
+            Redirect::to(&format!("/settings?error={}", percent_encode(&err))).into_response()
+        }
     }
 }
 
@@ -399,6 +445,7 @@ impl UsernameOr for PolicySnapshot {
 const STYLE: &str = r#"
 body { font-family: system-ui, sans-serif; margin: 0; color: #1b2733; background: #f6f8fa; }
 header { background: #22364a; color: #fff; padding: 0.8rem 1.2rem; }
+header img.logo { height: 1.5rem; vertical-align: middle; margin-right: 0.6rem; }
 header a { color: #cfe0f2; margin-right: 1rem; text-decoration: none; }
 main { max-width: 60rem; margin: 1rem auto; padding: 0 1rem; }
 .policy { background: #e8eef5; border: 1px solid #c4d2e0; border-radius: 6px; padding: 0.6rem 1rem; font-size: 0.9rem; margin-bottom: 1rem; }
@@ -415,6 +462,19 @@ button { padding: 0.4rem 0.9rem; margin-top: 0.4rem; }
 form.diagnose { display: inline; }
 "#;
 
+/// The CE shield mark (88×94 PNG, `packaging/assets/lustless-mark.png` —
+/// provenance in `packaging/assets/README.md`) as a `data:` URI, encoded
+/// once per process. The dashboard stays asset-free over HTTP: the bytes
+/// are compiled into the binary.
+static LOGO_DATA_URI: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    use base64::Engine as _;
+    let png = include_bytes!("../../../packaging/assets/lustless-mark.png");
+    format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(png)
+    )
+});
+
 /// Renders one page: nav + the §9 policy strip + the page body. Every page
 /// carries the current `PolicySnapshot` (§13).
 fn layout(title: &str, snapshot: &PolicySnapshot, body: &str) -> String {
@@ -422,7 +482,7 @@ fn layout(title: &str, snapshot: &PolicySnapshot, body: &str) -> String {
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <title>LustLess — {title}</title><style>{STYLE}</style></head>\
-         <body><header><strong>LustLess</strong> \
+         <body><header><img class=\"logo\" src=\"{logo}\" alt=\"LustLess\">\
          <a href=\"/\">Status</a><a href=\"/sign-in\">Sign in</a>\
          <a href=\"/settings\">Settings</a><a href=\"/activity\">DNS activity</a>\
          <form method=\"post\" action=\"/sign-out\" class=\"diagnose\">\
@@ -433,11 +493,16 @@ fn layout(title: &str, snapshot: &PolicySnapshot, body: &str) -> String {
          State: <strong>{state}</strong> · Filter: <strong>{level}</strong> \
          ({health}) · Capture: <strong>{capture}</strong>{fail_closed_note}</div>\
          {body}</main></body></html>",
+        logo = LOGO_DATA_URI.as_str(),
         account = esc(snapshot.username_or("(signed out)")),
         state = esc(&format!("{:?}", snapshot.state)),
         level = esc(&snapshot.filter.level),
         health = esc(&snapshot.filter.health),
-        capture = if snapshot.capture.active { "active" } else { "inactive" },
+        capture = if snapshot.capture.active {
+            "active"
+        } else {
+            "inactive"
+        },
         fail_closed_note = if snapshot.filter.fail_closed {
             String::new()
         } else {

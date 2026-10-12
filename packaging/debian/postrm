@@ -112,7 +112,8 @@ case "${1:-}" in
             systemctl daemon-reload >/dev/null 2>&1 || true
         fi
         ;;
-    abort-install|abort-upgrade|failed-upgrade|disappear)
+    upgrade|abort-install|abort-upgrade|failed-upgrade|disappear)
+        # Upgrade/abort paths keep all state (the new version configures it).
         ;;
     *)
         log "postrm called with unknown argument '${1:-}'" >&2

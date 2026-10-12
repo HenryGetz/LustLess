@@ -188,7 +188,12 @@ async fn tick(
     }
 
     // Capture.
-    let capture = match backend.as_mut().expect("backend checked above").capture().await {
+    let capture = match backend
+        .as_mut()
+        .expect("backend checked above")
+        .capture()
+        .await
+    {
         Ok(capture) if capture.is_empty() => {
             tracing::warn!("capture: no monitor captured");
             return Scheduler::RETRY_WORST;
@@ -232,7 +237,11 @@ async fn tick(
                 tracing::info!(
                     "Possible circumvention: Screen capture is restricted for App: `{app}` with Window Title: `{title}`"
                 );
-                let title = if title.is_empty() { None } else { Some(title.as_str()) };
+                let title = if title.is_empty() {
+                    None
+                } else {
+                    Some(title.as_str())
+                };
                 if let Err(err) =
                     state.record_circumvention(&username, INTERRUPTION_RESTRICTED, &app, title)
                 {
@@ -432,7 +441,9 @@ mod tests {
         assert_eq!(&stamp[19..20], ".", "{stamp}");
         assert!(stamp.ends_with('Z'), "{stamp}");
         assert!(
-            stamp[..19].bytes().all(|b| b.is_ascii_digit() || b == b':'),
+            stamp[..19]
+                .bytes()
+                .all(|b| b.is_ascii_digit() || b == b':' || b == b'-' || b == b'T'),
             "{stamp}"
         );
     }
@@ -448,10 +459,16 @@ mod tests {
     /// depend on it).
     #[test]
     fn interruption_vocabulary_is_stable() {
-        assert_eq!(INTERRUPTION_RESTRICTED, "windows-screen-recording-not-allowed");
+        assert_eq!(
+            INTERRUPTION_RESTRICTED,
+            "windows-screen-recording-not-allowed"
+        );
         assert_eq!(INTERRUPTION_TAMPER_REMOVED, "pdl-transaction-file-removed");
         assert_eq!(INTERRUPTION_TAMPER_RENAMED, "pdl-transaction-file-renamed");
-        assert_eq!(crate::classifier::INTERRUPTION_WINDOW_FLAGGED, "window-flagged");
+        assert_eq!(
+            crate::classifier::INTERRUPTION_WINDOW_FLAGGED,
+            "window-flagged"
+        );
     }
 
     #[test]

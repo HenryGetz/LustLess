@@ -66,7 +66,7 @@ impl OutboxActivitySink {
         };
         CoreDnsActivityRow {
             username,
-            domain: row.domain,
+            domain: row.domain.trim_end_matches('.').to_ascii_lowercase(),
             process_id: Some(row.process_id.to_string()),
             process_name: row.process_name,
             datetime_created: row.datetime_created,
@@ -136,7 +136,10 @@ impl HealthSink for MetricHealthSink {
             fields.push(DaemonState::counter_field("latency_ms", latency_ms));
         }
         let username = self.state.username();
-        if let Err(err) = self.state.record_metric_tagged(&username, metric, &tags, &fields) {
+        if let Err(err) = self
+            .state
+            .record_metric_tagged(&username, metric, &tags, &fields)
+        {
             tracing::warn!("cleanbrowsing metric failed: {err}");
         }
     }
@@ -240,7 +243,10 @@ pub async fn spawn(state: Arc<DaemonState>, shutdown: watch::Receiver<bool>) {
         match block_page_addr(&cfg.dns.listen) {
             Some(addr) => match BlockPageServer::bind(addr, &cfg.dns.block_page_host).await {
                 Ok(block_page) => {
-                    tracing::info!("dns: block page on {addr} (host {})", cfg.dns.block_page_host);
+                    tracing::info!(
+                        "dns: block page on {addr} (host {})",
+                        cfg.dns.block_page_host
+                    );
                     tokio::spawn(async move {
                         if let Err(err) = block_page.run().await {
                             tracing::warn!("dns: block page stopped: {err}");
@@ -249,7 +255,10 @@ pub async fn spawn(state: Arc<DaemonState>, shutdown: watch::Receiver<bool>) {
                 }
                 Err(err) => tracing::warn!("dns: block page bind failed: {err}"),
             },
-            None => tracing::warn!("dns: cannot derive block page address from {}", cfg.dns.listen),
+            None => tracing::warn!(
+                "dns: cannot derive block page address from {}",
+                cfg.dns.listen
+            ),
         }
     }
 
@@ -297,7 +306,9 @@ mod tests {
 
         state.set_sign_in_uid_hint(1000);
         state.sign_in("alice", "pw").expect("sign-in");
-        state.set_override("example.com", "block").expect("override");
+        state
+            .set_override("example.com", "block")
+            .expect("override");
 
         assert_eq!(
             policy.custom_override("example.com"),

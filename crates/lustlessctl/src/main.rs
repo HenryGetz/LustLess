@@ -28,7 +28,18 @@ use ipc::IpcError;
 const INSTALLED_CTL_PATH: &str = "/usr/bin/lustlessctl";
 
 fn main() -> ExitCode {
-    let argv: Vec<String> = std::env::args().skip(1).collect();
+    // Global `--config <path>` is consumed here (not a subcommand flag).
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    let mut argv: Vec<String> = Vec::with_capacity(raw.len());
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i] == "--config" && i + 1 < raw.len() {
+            i += 2;
+        } else {
+            argv.push(raw[i].clone());
+            i += 1;
+        }
+    }
     match Command::parse(&argv) {
         Ok(Command::Help) => {
             println!("{USAGE}");
@@ -77,6 +88,14 @@ impl From<IpcError> for AppError {
 }
 
 fn config_path() -> PathBuf {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--config" {
+            if let Some(value) = args.next() {
+                return PathBuf::from(value);
+            }
+        }
+    }
     std::env::var_os("LUSTLESS_CONFIG")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/etc/lustless/lustless.toml"))
@@ -131,7 +150,10 @@ fn run(command: &Command) -> Result<(), AppError> {
                 json!({ "username": username, "password": password }),
             )?;
             println!("Signed in as {username} (session token held by lustlessd).");
-            if let Some(url) = reply.get("dashboard_url").and_then(serde_json::Value::as_str) {
+            if let Some(url) = reply
+                .get("dashboard_url")
+                .and_then(serde_json::Value::as_str)
+            {
                 if !url.is_empty() {
                     println!("Dashboard: {url}");
                 }
@@ -145,12 +167,8 @@ fn run(command: &Command) -> Result<(), AppError> {
         }
         Command::CollectDebug => {
             let (code, payload) = plain_request(command)?;
-            let (reply, notifications) = ipc::request_collect(
-                &socket_path(),
-                code,
-                payload,
-                ipc::DEFAULT_READ_TIMEOUT,
-            )?;
+            let (reply, notifications) =
+                ipc::request_collect(&socket_path(), code, payload, ipc::DEFAULT_READ_TIMEOUT)?;
             for payload in &notifications {
                 print_notification(payload);
             }
@@ -185,7 +203,9 @@ fn run(command: &Command) -> Result<(), AppError> {
                         "now" => println!(
                             "Update recommended now: version {version} (critical: {critical})."
                         ),
-                        "later" => println!("Update available: version {version}; apply at your convenience."),
+                        "later" => println!(
+                            "Update available: version {version}; apply at your convenience."
+                        ),
                         _ => println!("No update recommended."),
                     }
                 }
@@ -245,7 +265,9 @@ fn run_break_glass(reason: &str) -> Result<(), AppError> {
         .arg(reason)
         .status()
         .map_err(|err| {
-            AppError::Failed(format!("cannot launch pkexec ({err}) — is policykit-1 installed?"))
+            AppError::Failed(format!(
+                "cannot launch pkexec ({err}) — is policykit-1 installed?"
+            ))
         })?;
     if status.success() {
         Ok(())

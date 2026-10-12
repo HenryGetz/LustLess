@@ -39,6 +39,8 @@ pub enum SpoolError {
     },
     #[error("manifest serialization failed: {0}")]
     Manifest(#[from] serde_json::Error),
+    #[error("manifest validation failed: {0}")]
+    InvalidManifest(#[from] manifest::ManifestError),
     #[error("transaction not finalized yet")]
     NotFinalized,
 }
@@ -179,7 +181,7 @@ impl TransactionWriter {
             "pdl-edi: marked spool transaction ready: {}",
             self.folder.display()
         );
-        Ok(self.folder)
+        Ok(std::mem::take(&mut self.folder))
     }
 }
 
@@ -217,12 +219,48 @@ pub struct CleanupReport {
     pub removed_stale: Vec<PathBuf>,
 }
 
+/// Parseable prefix of a transaction folder name: `26` bytes of
+/// `<YYYY-MM-DDTHH-MM-SS.mmmmmm>` (see [`manifest::transaction_timestamp`]). Anything after
+/// that prefix — the `-0`…`-9` collision suffix, CE's extra micros digits — is ignored.
+const FOLDER_NAME_LEN: usize = 26;
+const FOLDER_NAME_FORMAT: &str = "%Y-%m-%dT%H-%M-%S%.6f";
+
+/// The transaction timestamp encoded in a folder name (`None` for a non-conforming name or
+/// a pre-epoch one).
+fn folder_name_timestamp(name: &str) -> Option<SystemTime> {
+    let stamp = name.get(..FOLDER_NAME_LEN)?;
+    let micros = u64::try_from(
+        chrono::NaiveDateTime::parse_from_str(stamp, FOLDER_NAME_FORMAT)
+            .ok()?
+            .and_utc()
+            .timestamp_micros(),
+    )
+    .ok()?;
+    Some(SystemTime::UNIX_EPOCH + Duration::from_micros(micros))
+}
+
+/// Age of a transaction folder: the timestamp in its name (the transaction's creation time),
+/// falling back to the directory mtime for a name that doesn't parse.
+fn folder_age(path: &Path, now: SystemTime) -> Duration {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(folder_name_timestamp)
+        .or_else(|| fs::metadata(path).and_then(|m| m.modified()).ok())
+        .and_then(|since| now.duration_since(since).ok())
+        .unwrap_or(Duration::ZERO)
+}
+
 /// Remove orphaned transactions at startup (CE `PdlEdi::cleanFolders`,
 /// `capture-pipeline.md` §"clean PDL send folders").
 ///
 /// * incomplete (no `ready`) folders older than `incomplete_max_age` — crashed producer;
 /// * `ready` folders older than `stale_max_age` — the consumer never came back for them and
-///   the pixels are worthless (screenstate freshness is seconds, not hours).
+///   the pixels are worthless (screenstate freshness is seconds, not hours). The classifier
+///   passes `Duration::MAX` here: ready transactions are consumed regardless of age.
+///
+/// A folder's age is the timestamp in its name (its transaction creation time), not its
+/// mtime: finalize bumps the directory mtime, and an mtime is trivially reset by anyone
+/// trying to keep (or hasten) a folder around.
 pub fn cleanup_orphaned(
     spool_dir: &Path,
     uid: &str,
@@ -244,11 +282,7 @@ pub fn cleanup_orphaned(
             continue;
         }
         let has_ready = path.join(READY_MARKER).exists();
-        let age = fs::metadata(&path)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|mtime| now.duration_since(mtime).ok())
-            .unwrap_or(Duration::ZERO);
+        let age = folder_age(&path, now);
         if !has_ready && age >= incomplete_max_age {
             fs::remove_dir_all(&path).map_err(|e| io_err(&path, e))?;
             report.removed_incomplete.push(path);
@@ -322,14 +356,17 @@ impl SpoolWatcher {
             .mode(0o700)
             .create(&root)
             .map_err(|e| io_err(&root, e))?;
-        let mut inode = Inotify::init().map_err(|e| io_err(&root, e))?;
+        let inode = Inotify::init().map_err(|e| io_err(&root, e))?;
         let mask = WatchMask::CREATE
             | WatchMask::DELETE
             | WatchMask::MOVED_FROM
             | WatchMask::MOVED_TO
             | WatchMask::DELETE_SELF
-            | WatchMask::MOVED_SELF;
-        let root_wd = inode.add_watch(&root, mask).map_err(|e| io_err(&root, e))?;
+            | WatchMask::MOVE_SELF;
+        let root_wd = inode
+            .watches()
+            .add(&root, mask)
+            .map_err(|e| io_err(&root, e))?;
         let mut watches = HashMap::new();
         watches.insert(root_wd, Watched::Root);
         let mut watcher = Self {
@@ -340,7 +377,7 @@ impl SpoolWatcher {
             tamper: Vec::new(),
         };
         // Adopt transaction folders created before this watcher existed.
-        let entries = fs::read_dir(&watcher.root.clone()).map_err(|e| io_err(&watcher.root, e))?;
+        let entries = fs::read_dir(watcher.root.clone()).map_err(|e| io_err(&watcher.root, e))?;
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
@@ -400,8 +437,8 @@ impl SpoolWatcher {
             let mut buf = [0u8; 8192];
             match self.inode.read_events(&mut buf) {
                 Ok(events) => {
-                    for event in &events {
-                        self.handle_event(event, &mut ready);
+                    for event in events {
+                        self.handle_event(&event, &mut ready);
                     }
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
@@ -416,7 +453,7 @@ impl SpoolWatcher {
         Ok(ready)
     }
 
-    fn handle_event(&mut self, event: &Event<impl AsRef<std::ffi::OsStr> + ?Sized>, ready: &mut Vec<PathBuf>) {
+    fn handle_event(&mut self, event: &Event<&std::ffi::OsStr>, ready: &mut Vec<PathBuf>) {
         let Some(name) = event.name.map(|n| n.to_string_lossy().into_owned()) else {
             return;
         };
@@ -430,8 +467,7 @@ impl SpoolWatcher {
         let is_root_child = matches!(self.watches.get(&event.wd), Some(Watched::Root));
 
         if is_root_child {
-            if event.mask.contains(EventMask::CREATE) || event.mask.contains(EventMask::MOVED_TO)
-            {
+            if event.mask.contains(EventMask::CREATE) || event.mask.contains(EventMask::MOVED_TO) {
                 self.watch_transaction(watched_path);
             } else {
                 // A transaction directory was removed or renamed. If it was an unconsumed
@@ -444,7 +480,7 @@ impl SpoolWatcher {
                     } else {
                         TamperKind::Removed
                     };
-                    self.record_tamper(kind, watched_path);
+                    self.record_tamper(kind, watched_path.clone());
                 }
                 self.retire_watch(&watched_path);
             }
@@ -484,8 +520,9 @@ impl SpoolWatcher {
         {
             return;
         }
-        let mask = WatchMask::CREATE | WatchMask::DELETE | WatchMask::MOVED_FROM | WatchMask::MOVED_TO;
-        let Ok(wd) = self.inode.add_watch(&path, mask) else {
+        let mask =
+            WatchMask::CREATE | WatchMask::DELETE | WatchMask::MOVED_FROM | WatchMask::MOVED_TO;
+        let Ok(wd) = self.inode.watches().add(&path, mask) else {
             return;
         };
         if path.join(READY_MARKER).exists() {
@@ -499,12 +536,12 @@ impl SpoolWatcher {
             .watches
             .iter()
             .filter_map(|(wd, w)| match w {
-                Watched::Transaction(p) if p == path => Some(*wd),
+                Watched::Transaction(p) if p == path => Some(wd.clone()),
                 _ => None,
             })
             .collect();
         for wd in stale {
-            let _ = self.inode.rm_watch(wd);
+            let _ = self.inode.watches().remove(wd.clone());
             self.watches.remove(&wd);
         }
     }
@@ -616,10 +653,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let spool = dir.path();
         let root = pdl_root(spool, "tester");
-        fs::DirBuilder::new()
-            .recursive(true)
-            .create(&root)
-            .unwrap();
+        fs::DirBuilder::new().recursive(true).create(&root).unwrap();
 
         let incomplete = root.join("2026-10-11T00-00-00.000000");
         fs::create_dir(&incomplete).unwrap();

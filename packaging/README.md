@@ -43,6 +43,13 @@ sudo apt install ./lustless_0.1.0_amd64.deb
 packaging/
   build-deb.sh                 build lustless_0.1.0_amd64.deb
   README.md                    this file
+  assets/                      CE logo/icon artwork (extracted from the shipped
+                               binaries; provenance + authorization in
+                               assets/README.md). `lustless-256.png` is staged
+                               as /usr/share/pixmaps/lustless.png (control's
+                               Icon: field); `lustless-32.png` and
+                               `lustless-mark.png` are compiled into the agent
+                               tray and the dashboard header respectively.
   debian/
     control                    package metadata (Depends per CONTRACTS §15)
     conffiles                  /etc/lustless/lustless.toml

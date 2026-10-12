@@ -45,7 +45,7 @@ pub use health::{
     OutageMachine, METRIC_CLEANBROWSING_PROBLEM, METRIC_CLEANBROWSING_SUCCESS,
     REASON_ERROR_RECOVERY, REASON_TYPICAL,
 };
-pub use server::{DnsServer, DnsSettings, PolicyProvider, DomainListPolicy};
+pub use server::{DnsServer, DnsSettings, DomainListPolicy, PolicyProvider};
 pub use verdicts::{
     answer_is_filter_block, decide, OverrideVerdict, PathOutcome, ResponseEndpoint, Verdict,
     VerdictInput, VerdictType, RPZ_BLOCK_MARKER,

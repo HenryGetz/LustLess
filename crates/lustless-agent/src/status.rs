@@ -1,5 +1,7 @@
 //! Tray status colour derived from the §9 `PolicySnapshot` (CONTRACTS §13:
-//! "status icon color").
+//! "status icon color"). The tray icon itself is the fixed CE logo
+//! (`indicator.rs`); the colour drives the adjacent label text and the
+//! desktop notifications.
 //!
 //! Colour contract (product semantics):
 //! * **green** — signed in, filtering active and healthy;
@@ -25,18 +27,6 @@ pub enum StatusColor {
 }
 
 impl StatusColor {
-    /// The theme-icon suffix of this colour (the agent writes
-    /// `lustless-status-<name>.svg` icon files and points the indicator's
-    /// icon theme path at them).
-    pub const fn icon_name(self) -> &'static str {
-        match self {
-            StatusColor::Green => "lustless-status-green",
-            StatusColor::Amber => "lustless-status-amber",
-            StatusColor::Red => "lustless-status-red",
-            StatusColor::Gray => "lustless-status-gray",
-        }
-    }
-
     /// Menu/label text shown next to the icon.
     pub const fn label(self) -> &'static str {
         match self {
@@ -67,7 +57,10 @@ pub fn color_for(snapshot: Option<&PolicySnapshot>) -> StatusColor {
         return StatusColor::Amber;
     }
     // Sign-in / user-switch transitions in flight.
-    if matches!(snapshot.state, UserState::LoggingIn | UserState::SwitchingUser) {
+    if matches!(
+        snapshot.state,
+        UserState::LoggingIn | UserState::SwitchingUser
+    ) {
         return StatusColor::Amber;
     }
     StatusColor::Green
@@ -112,73 +105,92 @@ mod tests {
             // Signed in + filtering + healthy → green.
             (Some(snapshot()), StatusColor::Green),
             // Signed out → red (sign-out cuts web access).
-            ({
-                let mut s = snapshot();
-                s.signed_in = false;
-                s.state = UserState::LoggedOut;
-                Some(s)
-            }, StatusColor::Red),
+            (
+                {
+                    let mut s = snapshot();
+                    s.signed_in = false;
+                    s.state = UserState::LoggedOut;
+                    Some(s)
+                },
+                StatusColor::Red,
+            ),
             // LOGGED_OUT state without the flag still counts as signed out.
-            ({
-                let mut s = snapshot();
-                s.state = UserState::LoggedOut;
-                Some(s)
-            }, StatusColor::Red),
+            (
+                {
+                    let mut s = snapshot();
+                    s.state = UserState::LoggedOut;
+                    Some(s)
+                },
+                StatusColor::Red,
+            ),
             // Panic → red (static, never blinking).
-            ({
-                let mut s = snapshot();
-                s.is_panicked = true;
-                Some(s)
-            }, StatusColor::Red),
+            (
+                {
+                    let mut s = snapshot();
+                    s.is_panicked = true;
+                    Some(s)
+                },
+                StatusColor::Red,
+            ),
             // Panic while signed out stays red.
-            ({
-                let mut s = snapshot();
-                s.is_panicked = true;
-                s.signed_in = false;
-                Some(s)
-            }, StatusColor::Red),
+            (
+                {
+                    let mut s = snapshot();
+                    s.is_panicked = true;
+                    s.signed_in = false;
+                    Some(s)
+                },
+                StatusColor::Red,
+            ),
             // Filter outage → amber.
-            ({
-                let mut s = snapshot();
-                s.filter.health = "outage".into();
-                Some(s)
-            }, StatusColor::Amber),
+            (
+                {
+                    let mut s = snapshot();
+                    s.filter.health = "outage".into();
+                    Some(s)
+                },
+                StatusColor::Amber,
+            ),
             // Filter recovering → amber (degraded).
-            ({
-                let mut s = snapshot();
-                s.filter.health = "recovering".into();
-                Some(s)
-            }, StatusColor::Amber),
+            (
+                {
+                    let mut s = snapshot();
+                    s.filter.health = "recovering".into();
+                    Some(s)
+                },
+                StatusColor::Amber,
+            ),
             // Logging in → amber.
-            ({
-                let mut s = snapshot();
-                s.state = UserState::LoggingIn;
-                Some(s)
-            }, StatusColor::Amber),
+            (
+                {
+                    let mut s = snapshot();
+                    s.state = UserState::LoggingIn;
+                    Some(s)
+                },
+                StatusColor::Amber,
+            ),
             // Switching user → amber.
-            ({
-                let mut s = snapshot();
-                s.state = UserState::SwitchingUser;
-                Some(s)
-            }, StatusColor::Amber),
+            (
+                {
+                    let mut s = snapshot();
+                    s.state = UserState::SwitchingUser;
+                    Some(s)
+                },
+                StatusColor::Amber,
+            ),
             // Panic outranks outage: red wins.
-            ({
-                let mut s = snapshot();
-                s.is_panicked = true;
-                s.filter.health = "outage".into();
-                Some(s)
-            }, StatusColor::Red),
+            (
+                {
+                    let mut s = snapshot();
+                    s.is_panicked = true;
+                    s.filter.health = "outage".into();
+                    Some(s)
+                },
+                StatusColor::Red,
+            ),
         ];
         for (input, expected) in cases {
             assert_eq!(color_for(input.as_ref()), *expected, "{input:?}");
         }
-    }
-
-    #[test]
-    fn icon_names_are_stable() {
-        assert_eq!(StatusColor::Green.icon_name(), "lustless-status-green");
-        assert_eq!(StatusColor::Amber.icon_name(), "lustless-status-amber");
-        assert_eq!(StatusColor::Red.icon_name(), "lustless-status-red");
-        assert_eq!(StatusColor::Gray.icon_name(), "lustless-status-gray");
     }
 }

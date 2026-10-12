@@ -205,8 +205,7 @@ impl OutageMachine {
 
     /// CE `isTimeToSendTestPacket`: an `error-recovery` probe is due.
     pub fn is_time_to_send_test_packet(&self, now: Instant) -> bool {
-        self.state == FilterHealth::Outage
-            && self.next_probe_at.is_some_and(|at| now >= at)
+        self.state == FilterHealth::Outage && self.next_probe_at.is_some_and(|at| now >= at)
     }
 
     /// CE `startOutageRecoveryTimer` side of a probe dispatch: re-pace the
@@ -258,8 +257,18 @@ impl DnsHealth {
     }
 
     /// Same, with a caller-tuned machine.
-    pub fn with_machine(doh_url: &str, sink: Option<Arc<dyn HealthSink>>, machine: OutageMachine) -> Self {
-        Self { machine, sink, doh_url: doh_url.to_string(), successes: 0, problems: 0 }
+    pub fn with_machine(
+        doh_url: &str,
+        sink: Option<Arc<dyn HealthSink>>,
+        machine: OutageMachine,
+    ) -> Self {
+        Self {
+            machine,
+            sink,
+            doh_url: doh_url.to_string(),
+            successes: 0,
+            problems: 0,
+        }
     }
 
     /// Records one successful filter lookup (RCODE 0/3, §7).
@@ -290,7 +299,10 @@ impl DnsHealth {
     ) {
         self.emit(
             datacenter,
-            LookupOutcome::Error { http_status, dns_rcode },
+            LookupOutcome::Error {
+                http_status,
+                dns_rcode,
+            },
             reason,
             now,
         );
@@ -538,7 +550,9 @@ mod tests {
 
     #[test]
     fn health_sink_receives_ce_metric_names_and_tags() {
-        let sink = Arc::new(RecordingSink { events: crate::EngineMutex::new(Vec::new()) });
+        let sink = Arc::new(RecordingSink {
+            events: crate::EngineMutex::new(Vec::new()),
+        });
         let mut health = DnsHealth::new(
             "https://dns.cleanbrowsing.org/doh/adult-filter",
             Some(sink.clone()),
@@ -546,24 +560,40 @@ mod tests {
         let now = t0();
         health.record_doh_success(Some("lax".into()), 42, DohRequestReason::Typical, now);
         health.record_doh_timeout(DohRequestReason::ErrorRecovery, now);
-        health.record_doh_error(Some("iad".into()), Some(503), None, DohRequestReason::Typical, now);
+        health.record_doh_error(
+            Some("iad".into()),
+            Some(503),
+            None,
+            DohRequestReason::Typical,
+            now,
+        );
 
         let events = sink.events.lock().clone();
         assert_eq!(events.len(), 3);
         assert_eq!(events[0].metric, "client_cleanbrowsing_success");
         assert_eq!(events[0].request_reason, "typical");
         assert_eq!(events[0].datacenter.as_deref(), Some("lax"));
-        assert_eq!(events[0].doh_url, "https://dns.cleanbrowsing.org/doh/adult-filter");
+        assert_eq!(
+            events[0].doh_url,
+            "https://dns.cleanbrowsing.org/doh/adult-filter"
+        );
         assert_eq!(events[0].outcome, LookupOutcome::Success { latency_ms: 42 });
         assert_eq!(events[1].metric, "client_cleanbrowsing_problem");
         assert_eq!(events[1].request_reason, "error-recovery");
         assert_eq!(events[1].outcome, LookupOutcome::Timeout);
         assert_eq!(
             events[2].outcome,
-            LookupOutcome::Error { http_status: Some(503), dns_rcode: None }
+            LookupOutcome::Error {
+                http_status: Some(503),
+                dns_rcode: None
+            }
         );
         assert_eq!(health.counters(), (1, 2));
-        assert_eq!(health.health(), FilterHealth::Healthy, "threshold not reached");
+        assert_eq!(
+            health.health(),
+            FilterHealth::Healthy,
+            "threshold not reached"
+        );
     }
 
     #[test]

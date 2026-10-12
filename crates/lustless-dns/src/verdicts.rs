@@ -242,19 +242,43 @@ pub fn decide(input: &VerdictInput) -> Verdict {
 
     // 1–5: overrides and the fail-closed policy flag outrank everything.
     if input.fail_closed_block {
-        return Verdict { resolution_type: BlockedCustom, endpoint: Local, block: true };
+        return Verdict {
+            resolution_type: BlockedCustom,
+            endpoint: Local,
+            block: true,
+        };
     }
     match input.custom {
-        Block => return Verdict { resolution_type: BlockedCustom, endpoint: Local, block: true },
+        Block => {
+            return Verdict {
+                resolution_type: BlockedCustom,
+                endpoint: Local,
+                block: true,
+            }
+        }
         Allow => {
-            return Verdict { resolution_type: UnrestrictedAllowCustom, endpoint: User, block: false }
+            return Verdict {
+                resolution_type: UnrestrictedAllowCustom,
+                endpoint: User,
+                block: false,
+            }
         }
         NotApplicable => {}
     }
     match input.global {
-        Block => return Verdict { resolution_type: BlockedGlobal, endpoint: Local, block: true },
+        Block => {
+            return Verdict {
+                resolution_type: BlockedGlobal,
+                endpoint: Local,
+                block: true,
+            }
+        }
         Allow => {
-            return Verdict { resolution_type: UnrestrictedAllowGlobal, endpoint: User, block: false }
+            return Verdict {
+                resolution_type: UnrestrictedAllowGlobal,
+                endpoint: User,
+                block: false,
+            }
         }
         NotApplicable => {}
     }
@@ -262,11 +286,21 @@ pub fn decide(input: &VerdictInput) -> Verdict {
     // 6: outage — CE falls back to the user's resolvers with code 7.
     if input.filter_outage {
         return match &input.user {
-            Answer(_) => {
-                Verdict { resolution_type: UnrestrictedOutage, endpoint: User, block: false }
-            }
-            Timeout => Verdict { resolution_type: TimedOutSystem, endpoint: User, block: false },
-            Failure => Verdict { resolution_type: Failed, endpoint: User, block: false },
+            Answer(_) => Verdict {
+                resolution_type: UnrestrictedOutage,
+                endpoint: User,
+                block: false,
+            },
+            Timeout => Verdict {
+                resolution_type: TimedOutSystem,
+                endpoint: User,
+                block: false,
+            },
+            Failure => Verdict {
+                resolution_type: Failed,
+                endpoint: User,
+                block: false,
+            },
         };
     }
 
@@ -274,41 +308,91 @@ pub fn decide(input: &VerdictInput) -> Verdict {
     // answer; a block marker in that answer still means BlockedFilter.
     if input.safe_search_hit && matches!(&input.filter, Answer(_)) {
         if filter_marker {
-            return Verdict { resolution_type: BlockedFilter, endpoint: Local, block: true };
+            return Verdict {
+                resolution_type: BlockedFilter,
+                endpoint: Local,
+                block: true,
+            };
         }
-        return Verdict { resolution_type: SafeSearchEnforced, endpoint: Filter, block: false };
+        return Verdict {
+            resolution_type: SafeSearchEnforced,
+            endpoint: Filter,
+            block: false,
+        };
     }
 
     // 8: always-allowable predicate.
     if input.always_allowable {
-        return Verdict { resolution_type: UnrestrictedAlwaysAllowable, endpoint: User, block: false };
+        return Verdict {
+            resolution_type: UnrestrictedAlwaysAllowable,
+            endpoint: User,
+            block: false,
+        };
     }
 
     // 9: no filter path configured at all (CE "no filter socket" branch).
     if !input.filter_path_configured {
         return match &input.user {
-            Answer(_) => {
-                Verdict { resolution_type: UnrestrictedUnFiltered, endpoint: User, block: false }
-            }
-            Timeout => Verdict { resolution_type: TimedOutSystem, endpoint: User, block: false },
-            Failure => Verdict { resolution_type: Failed, endpoint: User, block: false },
+            Answer(_) => Verdict {
+                resolution_type: UnrestrictedUnFiltered,
+                endpoint: User,
+                block: false,
+            },
+            Timeout => Verdict {
+                resolution_type: TimedOutSystem,
+                endpoint: User,
+                block: false,
+            },
+            Failure => Verdict {
+                resolution_type: Failed,
+                endpoint: User,
+                block: false,
+            },
         };
     }
 
     // 10/11: filter answer vs. upstream failure matrix.
     match (&input.filter, &input.user) {
-        (Answer(_), _) if filter_marker => {
-            Verdict { resolution_type: BlockedFilter, endpoint: Local, block: true }
-        }
-        (Answer(_), _) => Verdict { resolution_type: UnrestrictedFiltered, endpoint: Filter, block: false },
-        (Timeout, Answer(_)) => Verdict { resolution_type: TimedOutFilter, endpoint: User, block: false },
-        (Timeout, Timeout) => Verdict { resolution_type: TimedOut, endpoint: User, block: false },
-        (Timeout, Failure) => Verdict { resolution_type: TimedOutFilter, endpoint: User, block: false },
-        (Failure, Answer(_)) => {
-            Verdict { resolution_type: UnrestrictedUnknown, endpoint: User, block: false }
-        }
-        (Failure, Timeout) => Verdict { resolution_type: TimedOutSystem, endpoint: User, block: false },
-        (Failure, Failure) => Verdict { resolution_type: Failed, endpoint: User, block: false },
+        (Answer(_), _) if filter_marker => Verdict {
+            resolution_type: BlockedFilter,
+            endpoint: Local,
+            block: true,
+        },
+        (Answer(_), _) => Verdict {
+            resolution_type: UnrestrictedFiltered,
+            endpoint: Filter,
+            block: false,
+        },
+        (Timeout, Answer(_)) => Verdict {
+            resolution_type: TimedOutFilter,
+            endpoint: User,
+            block: false,
+        },
+        (Timeout, Timeout) => Verdict {
+            resolution_type: TimedOut,
+            endpoint: User,
+            block: false,
+        },
+        (Timeout, Failure) => Verdict {
+            resolution_type: TimedOutFilter,
+            endpoint: User,
+            block: false,
+        },
+        (Failure, Answer(_)) => Verdict {
+            resolution_type: UnrestrictedUnknown,
+            endpoint: User,
+            block: false,
+        },
+        (Failure, Timeout) => Verdict {
+            resolution_type: TimedOutSystem,
+            endpoint: User,
+            block: false,
+        },
+        (Failure, Failure) => Verdict {
+            resolution_type: Failed,
+            endpoint: User,
+            block: false,
+        },
     }
 }
 
@@ -327,7 +411,11 @@ fn message_contains_marker(message: &Message) -> bool {
     let Ok(marker) = Name::from_ascii(RPZ_BLOCK_MARKER) else {
         return false;
     };
-    for record in message.answers().iter().chain(message.name_servers().iter()) {
+    for record in message
+        .answers()
+        .iter()
+        .chain(message.name_servers().iter())
+    {
         if marker.zone_of(record.name()) {
             return true;
         }
@@ -375,7 +463,10 @@ mod tests {
         msg.set_op_code(OpCode::Query);
         msg.set_recursion_desired(true);
         msg.set_response_code(ResponseCode::NoError);
-        msg.add_query(Query::query(Name::from_ascii("example.com").unwrap(), RecordType::A));
+        msg.add_query(Query::query(
+            Name::from_ascii("example.com").unwrap(),
+            RecordType::A,
+        ));
         msg.add_answer(Record::from_rdata(
             Name::from_ascii("example.com").unwrap(),
             60,
@@ -400,13 +491,29 @@ mod tests {
             (VerdictType::BlockedCustom, "BlockedCustom", 0xb),
             (VerdictType::BlockedGlobal, "BlockedGlobal", 10),
             (VerdictType::BlockedFilter, "BlockedFilter", 9),
-            (VerdictType::UnrestrictedAllowCustom, "UnrestrictedAllowCustom", 5),
-            (VerdictType::UnrestrictedAllowGlobal, "UnrestrictedAllowGlobal", 4),
+            (
+                VerdictType::UnrestrictedAllowCustom,
+                "UnrestrictedAllowCustom",
+                5,
+            ),
+            (
+                VerdictType::UnrestrictedAllowGlobal,
+                "UnrestrictedAllowGlobal",
+                4,
+            ),
             (VerdictType::UnrestrictedFiltered, "UnrestrictedFiltered", 1),
             (VerdictType::UnrestrictedUnknown, "UnrestrictedUnknown", 6),
             (VerdictType::SafeSearchEnforced, "SafeSearchEnforced", 8),
-            (VerdictType::UnrestrictedUnFiltered, "UnrestrictedUnFiltered", 2),
-            (VerdictType::UnrestrictedAlwaysAllowable, "UnrestrictedAlwaysAllowable", 3),
+            (
+                VerdictType::UnrestrictedUnFiltered,
+                "UnrestrictedUnFiltered",
+                2,
+            ),
+            (
+                VerdictType::UnrestrictedAlwaysAllowable,
+                "UnrestrictedAlwaysAllowable",
+                3,
+            ),
             (VerdictType::UnrestrictedOutage, "UnrestrictedOutage", 7),
             (VerdictType::TimedOut, "TimedOut", 12),
             (VerdictType::TimedOutFilter, "TimedOutFilter", 13),
@@ -431,8 +538,14 @@ mod tests {
     fn tri_state_overrides_map_per_ce() {
         assert_eq!(OverrideVerdict::from_tristate(0), OverrideVerdict::Allow);
         assert_eq!(OverrideVerdict::from_tristate(1), OverrideVerdict::Block);
-        assert_eq!(OverrideVerdict::from_tristate(2), OverrideVerdict::NotApplicable);
-        assert_eq!(OverrideVerdict::from_tristate(9), OverrideVerdict::NotApplicable);
+        assert_eq!(
+            OverrideVerdict::from_tristate(2),
+            OverrideVerdict::NotApplicable
+        );
+        assert_eq!(
+            OverrideVerdict::from_tristate(9),
+            OverrideVerdict::NotApplicable
+        );
     }
 
     #[test]
@@ -459,7 +572,10 @@ mod tests {
         input.custom = OverrideVerdict::Allow;
         input.global = OverrideVerdict::Block;
         let verdict = decide(&input);
-        assert_eq!(verdict.resolution_type, VerdictType::UnrestrictedAllowCustom);
+        assert_eq!(
+            verdict.resolution_type,
+            VerdictType::UnrestrictedAllowCustom
+        );
         assert_eq!(verdict.endpoint, ResponseEndpoint::User);
         assert!(!verdict.block);
     }
@@ -473,7 +589,10 @@ mod tests {
         assert!(verdict.block);
         input.global = OverrideVerdict::Allow;
         let verdict = decide(&input);
-        assert_eq!(verdict.resolution_type, VerdictType::UnrestrictedAllowGlobal);
+        assert_eq!(
+            verdict.resolution_type,
+            VerdictType::UnrestrictedAllowGlobal
+        );
         assert_eq!(verdict.endpoint, ResponseEndpoint::User);
     }
 
@@ -521,7 +640,10 @@ mod tests {
         let mut input = base_input();
         input.always_allowable = true;
         let verdict = decide(&input);
-        assert_eq!(verdict.resolution_type, VerdictType::UnrestrictedAlwaysAllowable);
+        assert_eq!(
+            verdict.resolution_type,
+            VerdictType::UnrestrictedAlwaysAllowable
+        );
         assert_eq!(verdict.endpoint, ResponseEndpoint::User);
     }
 
@@ -577,11 +699,7 @@ mod tests {
     #[test]
     fn timeout_and_failure_matrix_is_exhaustive_and_deterministic() {
         use PathOutcome::*;
-        let outcomes = [
-            Answer(clean_answer()),
-            Timeout,
-            Failure,
-        ];
+        let outcomes = [Answer(clean_answer()), Timeout, Failure];
         let mut seen = std::collections::HashSet::new();
         for filter in &outcomes {
             for user in &outcomes {
@@ -609,12 +727,23 @@ mod tests {
         }
         // Spot-check the §8 mapping of the timeout rows.
         let case = |filter, user| {
-            decide(&VerdictInput { filter, user, ..base_input() }).resolution_type
+            decide(&VerdictInput {
+                filter,
+                user,
+                ..base_input()
+            })
+            .resolution_type
         };
-        assert_eq!(case(Timeout, Answer(clean_answer())), VerdictType::TimedOutFilter);
+        assert_eq!(
+            case(Timeout, Answer(clean_answer())),
+            VerdictType::TimedOutFilter
+        );
         assert_eq!(case(Timeout, Timeout), VerdictType::TimedOut);
         assert_eq!(case(Timeout, Failure), VerdictType::TimedOutFilter);
-        assert_eq!(case(Failure, Answer(clean_answer())), VerdictType::UnrestrictedUnknown);
+        assert_eq!(
+            case(Failure, Answer(clean_answer())),
+            VerdictType::UnrestrictedUnknown
+        );
         assert_eq!(case(Failure, Timeout), VerdictType::TimedOutSystem);
         assert_eq!(case(Failure, Failure), VerdictType::Failed);
     }
@@ -645,7 +774,10 @@ mod tests {
         msg.set_message_type(MessageType::Response);
         msg.set_op_code(OpCode::Query);
         msg.set_response_code(ResponseCode::NoError);
-        msg.add_query(Query::query(Name::from_ascii("bad.example").unwrap(), RecordType::A));
+        msg.add_query(Query::query(
+            Name::from_ascii("bad.example").unwrap(),
+            RecordType::A,
+        ));
         msg.add_name_server(Record::from_rdata(
             Name::from_ascii("cleanbrowsing.rpz.noc.org").unwrap(),
             60,
@@ -656,7 +788,10 @@ mod tests {
 
     #[test]
     fn answer_bytes_accessor() {
-        assert_eq!(PathOutcome::Answer(vec![1]).answer_bytes(), Some(&[1u8][..]));
+        assert_eq!(
+            PathOutcome::Answer(vec![1]).answer_bytes(),
+            Some(&[1u8][..])
+        );
         assert_eq!(PathOutcome::Timeout.answer_bytes(), None);
         assert_eq!(PathOutcome::Failure.answer_bytes(), None);
     }
@@ -670,7 +805,10 @@ mod tests {
         msg.set_message_type(MessageType::Response);
         msg.set_op_code(OpCode::Query);
         msg.set_response_code(ResponseCode::NoError);
-        msg.add_query(Query::query(Name::from_ascii("example.com").unwrap(), RecordType::AAAA));
+        msg.add_query(Query::query(
+            Name::from_ascii("example.com").unwrap(),
+            RecordType::AAAA,
+        ));
         msg.add_answer(Record::from_rdata(
             Name::from_ascii("example.com").unwrap(),
             60,

@@ -70,7 +70,11 @@ pub struct AppEntry {
     /// Restricted/protected surface: the classifier must exclude this region from scoring
     /// (CONTRACTS §7 — captured and flagged, never aborted). Written only when `true`, like
     /// CE (`FUN_1402ed3a0`).
-    #[serde(rename = "doNotScore", skip_serializing_if = "Option::is_none", default)]
+    #[serde(
+        rename = "doNotScore",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
     pub do_not_score: Option<bool>,
 }
 
@@ -252,7 +256,10 @@ mod tests {
         assert_eq!(app["window_title"], "Protected");
         assert_eq!(app["appRect"], serde_json::json!([900, 0, 1020, 1080]));
         assert_eq!(app["doNotScore"], true);
-        assert_eq!(parsed["clientPayload"]["device"]["device_uuid"], "9f0d5f2e-device-uuid");
+        assert_eq!(
+            parsed["clientPayload"]["device"]["device_uuid"],
+            "9f0d5f2e-device-uuid"
+        );
         // doNotScore omitted entirely when absent (CE writes the key only when true).
         assert!(parsed["apps"][0].get("doNotScore").is_none());
 
@@ -312,7 +319,10 @@ mod tests {
     #[test]
     fn transaction_timestamp_is_filename_safe() {
         let ts = transaction_timestamp(chrono::Utc::now());
-        assert!(!ts.contains(':'), "colons would break the folder name: {ts}");
+        assert!(
+            !ts.contains(':'),
+            "colons would break the folder name: {ts}"
+        );
         assert!(ts.contains('T') && ts.contains('-') && ts.contains('.'));
         assert_eq!(ts.len(), "2026-10-11T12-00-00.000000".len());
     }

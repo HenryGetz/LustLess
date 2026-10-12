@@ -25,14 +25,14 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::process::Stdio;
+use std::process::{ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command, ExitStatus};
+use tokio::process::{Child, Command};
 use tokio::sync::watch;
 
 use lustless_core::db::Outbox;
@@ -267,7 +267,11 @@ impl CrashStore {
             .map(|stamp| stamp.to_string())
             .unwrap_or_default();
         let stopped = if budget.stopped { "1" } else { "0" };
-        for (kind, value) in [("total", total), ("last", last), ("stopped", stopped.to_string())] {
+        for (kind, value) in [
+            ("total", total),
+            ("last", last),
+            ("stopped", stopped.to_string()),
+        ] {
             if let Err(err) = outbox.set_install_metadata(&meta_key(kind, uid), &value) {
                 tracing::error!("crash budget persist failed (uid {uid}, {kind}): {err}");
             }
@@ -433,7 +437,10 @@ impl ClassifierSupervisor {
                     continue;
                 }
             };
-            tracing::info!("classifier spawned (uid {uid}, pid {})", child.id().unwrap_or(0));
+            tracing::info!(
+                "classifier spawned (uid {uid}, pid {})",
+                child.id().unwrap_or(0)
+            );
             self.state.set_classifier_alive(true);
 
             let outcome = self.supervise(uid, &mut child, &mut shutdown).await;
@@ -486,7 +493,8 @@ impl ClassifierSupervisor {
         let cfg = self.state.config();
         let username = self.state.username();
         // `--data` is the §7 message root: `<data>/pdl` is the §6.3 spool.
-        let data_dir = PathBuf::from(&cfg.capture.spool_dir).join(ids::url_safe_username(&username));
+        let data_dir =
+            PathBuf::from(&cfg.capture.spool_dir).join(ids::url_safe_username(&username));
         // `--cache` holds the bundle/batch state (§7; `classifier-data.md`).
         let cache_dir = PathBuf::from(&cfg.daemon.state_dir)
             .join(uid.to_string())
@@ -578,9 +586,7 @@ impl ClassifierSupervisor {
         match parse_line(trimmed) {
             Err(err) => tracing::warn!("classifier: unparseable stdout line ({err}): {trimmed}"),
             Ok(ClassifierMessage::Hello {
-                version,
-                model_ids,
-                ..
+                version, model_ids, ..
             }) => tracing::info!(
                 "classifier v{version} ready (uid {uid}, models: {})",
                 model_ids.join(",")
@@ -720,11 +726,11 @@ mod tests {
     #[test]
     fn malformed_lines_are_errors_not_panics() {
         for line in [
-            "",                                  // empty
-            "not json at all",                   // invalid JSON
-            r#"{"type":"mystery","ts":1}"#,       // unknown type
-            r#"{"type":"hello","version":"1"}"#,  // missing ts
-            r#"{"type":"log","ts":1,"level":"info"}"#, // missing message
+            "",                                           // empty
+            "not json at all",                            // invalid JSON
+            r#"{"type":"mystery","ts":1}"#,               // unknown type
+            r#"{"type":"hello","version":"1"}"#,          // missing ts
+            r#"{"type":"log","ts":1,"level":"info"}"#,    // missing message
             r#"{"type":"result","ts":1,"batch_ts":"b"}"#, // missing windows/summary/analyzed_count
             r#"{"type":"result","ts":1,"batch_ts":"b","windows":[{"app":"a","title":"t","rect":[0,0,1],"score":1,"flagged":false}],"summary":{"flagged":0,"top_score":0,"scored_windows":1},"analyzed_count":1}"#, // rect too short
             r#"{"type":"hello","ts":1,"version":1,"model_ids":[]}"#, // wrong field type
@@ -779,8 +785,14 @@ mod tests {
         let ts = test_state();
         let store = &ts.state.crash;
         store.record_crash(7, 10_000);
-        assert_eq!(store.relaunch(7, 10_001), Relaunch::SuppressUntil(10_000 + CRASH_SUPPRESS_SECS));
-        assert_eq!(store.relaunch(7, 10_000 + CRASH_SUPPRESS_SECS), Relaunch::Allow);
+        assert_eq!(
+            store.relaunch(7, 10_001),
+            Relaunch::SuppressUntil(10_000 + CRASH_SUPPRESS_SECS)
+        );
+        assert_eq!(
+            store.relaunch(7, 10_000 + CRASH_SUPPRESS_SECS),
+            Relaunch::Allow
+        );
 
         // Crashes 2..=4: only the 4th crosses the line.
         assert!(!store.record_crash(7, 20_000).stopped_now);
@@ -788,7 +800,10 @@ mod tests {
         let summary = store.record_crash(7, 40_000);
         assert!(summary.stopped_now, "3 -> 4 crosses >3");
         assert_eq!(summary.total, 4);
-        assert!(!store.record_crash(7, 50_000).stopped_now, "already stopped");
+        assert!(
+            !store.record_crash(7, 50_000).stopped_now,
+            "already stopped"
+        );
         assert_eq!(store.relaunch(7, 60_000), Relaunch::Stop);
 
         // A healthy run clears the budget (§11).
@@ -818,7 +833,11 @@ mod tests {
         supervisor.escalate(2000);
 
         let queued = guard(&queue);
-        assert_eq!(queued.len(), 2, "one notification per uid, not per observation");
+        assert_eq!(
+            queued.len(),
+            2,
+            "one notification per uid, not per observation"
+        );
         assert_eq!(queued[0].message, ESCALATION_MSG);
         assert_eq!(queued[0].level, "error");
         drop(queued);
@@ -827,10 +846,7 @@ mod tests {
 
     #[test]
     fn transaction_keys_match_across_timestamp_forms() {
-        assert_eq!(
-            txn_key("2026-10-11T05-00-00.123456"),
-            "2026-10-11T05-00-00"
-        );
+        assert_eq!(txn_key("2026-10-11T05-00-00.123456"), "2026-10-11T05-00-00");
         assert_eq!(
             txn_key("2026-10-11T05:00:00.123456Z"),
             "2026-10-11T05-00-00"
@@ -934,6 +950,10 @@ mod tests {
             1,
         );
         assert_eq!(circumvention_rows(&ts), 0, "§7 toggle respected");
-        assert_eq!(state.policy_state().analyzed_count, 1, "counter still bumps");
+        assert_eq!(
+            state.policy_state().analyzed_count,
+            1,
+            "counter still bumps"
+        );
     }
 }

@@ -210,6 +210,7 @@ impl SettingsDb {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .mode(0o600)
             .open(db_path)?;
         std::fs::set_permissions(db_path, permissions.clone())?;
@@ -381,9 +382,10 @@ impl SettingsDb {
     /// Removes a global domain override (§6.2). Returns whether a row was
     /// removed.
     pub fn delete_global_override(&mut self, domain: &str) -> Result<bool, CoreError> {
-        let changed = self
-            .conn
-            .execute("DELETE FROM global_domain_overrides WHERE domain = ?1", params![domain])?;
+        let changed = self.conn.execute(
+            "DELETE FROM global_domain_overrides WHERE domain = ?1",
+            params![domain],
+        )?;
         Ok(changed > 0)
     }
 
@@ -456,10 +458,7 @@ impl SettingsDb {
     }
 
     /// Reads `api_credentials` (§6.2).
-    pub fn get_api_credentials(
-        &self,
-        username: &str,
-    ) -> Result<Option<ApiCredentials>, CoreError> {
+    pub fn get_api_credentials(&self, username: &str) -> Result<Option<ApiCredentials>, CoreError> {
         let credentials = self
             .conn
             .query_row(
@@ -480,9 +479,10 @@ impl SettingsDb {
     /// Signs out locally by clearing the stored tokens (§6.2/§10). Returns
     /// whether a row was removed.
     pub fn clear_api_credentials(&mut self, username: &str) -> Result<bool, CoreError> {
-        let changed = self
-            .conn
-            .execute("DELETE FROM api_credentials WHERE username = ?1", params![username])?;
+        let changed = self.conn.execute(
+            "DELETE FROM api_credentials WHERE username = ?1",
+            params![username],
+        )?;
         Ok(changed > 0)
     }
 }
@@ -541,11 +541,7 @@ fn checked_key(key: Vec<u8>, path: &Path) -> Result<Vec<u8>, CoreError> {
 /// Identifier validation for [`SettingsDb::ensure_column`] (identifiers cannot
 /// be SQL-parameterized).
 fn check_ident(name: &str) -> Result<(), CoreError> {
-    if name.is_empty()
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Err(CoreError::InvalidIdentifier(name.to_string()));
     }
     Ok(())
@@ -556,8 +552,7 @@ fn check_ident(name: &str) -> Result<(), CoreError> {
 fn check_decl(decl: &str) -> Result<(), CoreError> {
     if decl.is_empty()
         || !decl.chars().all(|c| {
-            c.is_ascii_alphanumeric()
-                || matches!(c, ' ' | '_' | '(' | ')' | '\'' | ',' | '.' | '-')
+            c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '(' | ')' | '\'' | ',' | '.' | '-')
         })
     {
         return Err(CoreError::InvalidIdentifier(decl.to_string()));
@@ -711,7 +706,10 @@ mod tests {
         // Overwrite the keyfile with different (32-byte) material.
         std::fs::write(&key_path, [7u8; KEY_LEN]).expect("wrong key");
         let err = SettingsDb::open(&db_path, &key_path).unwrap_err();
-        assert!(matches!(err, CoreError::Db(_)), "wrong key must fail: {err:?}");
+        assert!(
+            matches!(err, CoreError::Db(_)),
+            "wrong key must fail: {err:?}"
+        );
     }
 
     #[test]
@@ -734,7 +732,10 @@ mod tests {
         };
         assert!(harness.db.get_user_info("alice").unwrap().is_none());
         harness.db.set_user_info(&info).expect("insert");
-        assert_eq!(harness.db.get_user_info("alice").unwrap(), Some(info.clone()));
+        assert_eq!(
+            harness.db.get_user_info("alice").unwrap(),
+            Some(info.clone())
+        );
 
         // Upsert updates in place.
         let mut changed = info.clone();
@@ -868,7 +869,10 @@ mod tests {
                 [],
             )
             .unwrap_err();
-        assert!(matches!(err, rusqlite::Error::SqliteFailure(_, _)), "{err:?}");
+        assert!(
+            matches!(err, rusqlite::Error::SqliteFailure(_, _)),
+            "{err:?}"
+        );
     }
 
     #[test]

@@ -39,7 +39,7 @@ use serde_json::json;
 use tracing::{debug, error, info, warn};
 
 use crate::uploader::{
-    device_uuid, platform_version, tracked_exchange, AuditLog, ApiMethod, ApiResult, Http,
+    device_uuid, platform_version, tracked_exchange, ApiMethod, ApiResult, AuditLog, Http,
 };
 use crate::{Notifier, PolicyProvider};
 
@@ -173,7 +173,12 @@ pub(crate) fn trusted_url(url: &str, allowlist: &[String]) -> bool {
 fn package_name(url: &str) -> String {
     reqwest::Url::parse(url)
         .ok()
-        .and_then(|parsed| parsed.path_segments().and_then(|mut s| s.next_back()).map(str::to_string))
+        .and_then(|parsed| {
+            parsed
+                .path_segments()
+                .and_then(|mut s| s.next_back())
+                .map(str::to_string)
+        })
         .filter(|name| {
             !name.is_empty()
                 && name
@@ -342,8 +347,11 @@ impl Updater {
         // BEFORE any package tooling runs.
         if let Err(err) = verify_payload(key, &feed.sig, &payload) {
             warn!("update signature rejected: {err}; download discarded");
-            self.notifier
-                .notify("error", "update signature verification failed; download discarded", None);
+            self.notifier.notify(
+                "error",
+                "update signature verification failed; download discarded",
+                None,
+            );
             return;
         }
         debug!(url = %feed.url, "update payload signature verified");
@@ -437,8 +445,11 @@ impl Updater {
             let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
         }
         info!(version, path = %path.display(), "applying verified update");
-        self.notifier
-            .notify("info", &format!("applying verified update {version}"), Some(50));
+        self.notifier.notify(
+            "info",
+            &format!("applying verified update {version}"),
+            Some(50),
+        );
         let installer = Arc::clone(&self.installer);
         let target = path.clone();
         let outcome = tokio::task::spawn_blocking(move || installer.install(&target)).await;
@@ -446,7 +457,9 @@ impl Updater {
             Ok(Ok(())) => {
                 self.notifier.notify(
                     "info",
-                    &format!("update {version} installed; it takes effect after the daemon restarts"),
+                    &format!(
+                        "update {version} installed; it takes effect after the daemon restarts"
+                    ),
                     None,
                 );
             }
@@ -476,7 +489,6 @@ mod tests {
     use crate::uploader::test_http::MockHttp;
     use crate::uploader::{ApiRequest, ApiResponse};
     use base64::engine::general_purpose::STANDARD;
-    use base64::Engine as _;
     use ed25519_dalek::Signer;
     use parking_lot::Mutex as ParkingMutex;
 
@@ -525,7 +537,10 @@ mod tests {
 
     const SEED: [u8; 32] = [7u8; 32];
 
-    fn harness(name: &str, handler: impl Fn(ApiRequest) -> ApiResponse + Send + Sync + 'static) -> Harness {
+    fn harness(
+        name: &str,
+        handler: impl Fn(ApiRequest) -> ApiResponse + Send + Sync + 'static,
+    ) -> Harness {
         let dir = temp_dir(name);
         let signing = ed25519_dalek::SigningKey::from_bytes(&SEED);
         let pubkey_b64 = STANDARD.encode(signing.verifying_key().to_bytes());
@@ -620,7 +635,10 @@ mod tests {
             let signing = ed25519_dalek::SigningKey::from_bytes(&SEED);
             STANDARD.encode(signing.sign(PAYLOAD).to_bytes())
         };
-        let harness = harness("update-apply", feed_server("now", true, DEB_URL, PAYLOAD, sig));
+        let harness = harness(
+            "update-apply",
+            feed_server("now", true, DEB_URL, PAYLOAD, sig),
+        );
         let key = harness.pubkey();
         let mut updater = harness.updater();
         runtime().block_on(updater.check(&key));
@@ -642,7 +660,10 @@ mod tests {
             raw[0] ^= 0xFF; // corrupt one byte
             STANDARD.encode(raw)
         };
-        let harness = harness("update-badsig", feed_server("now", true, DEB_URL, PAYLOAD, sig));
+        let harness = harness(
+            "update-badsig",
+            feed_server("now", true, DEB_URL, PAYLOAD, sig),
+        );
         let key = harness.pubkey();
         let mut updater = harness.updater();
         runtime().block_on(updater.check(&key));
@@ -661,7 +682,10 @@ mod tests {
             let signing = ed25519_dalek::SigningKey::from_bytes(&SEED);
             STANDARD.encode(signing.sign(b"other bytes").to_bytes())
         };
-        let harness = harness("update-sigswap", feed_server("now", true, DEB_URL, PAYLOAD, sig));
+        let harness = harness(
+            "update-sigswap",
+            feed_server("now", true, DEB_URL, PAYLOAD, sig),
+        );
         let key = harness.pubkey();
         let mut updater = harness.updater();
         runtime().block_on(updater.check(&key));
@@ -676,7 +700,13 @@ mod tests {
         };
         let harness = harness(
             "update-badhost",
-            feed_server("now", true, "https://evil.example/lustless.deb", PAYLOAD, sig),
+            feed_server(
+                "now",
+                true,
+                "https://evil.example/lustless.deb",
+                PAYLOAD,
+                sig,
+            ),
         );
         let key = harness.pubkey();
         let mut updater = harness.updater();
@@ -713,7 +743,10 @@ mod tests {
 
     #[test]
     fn none_recommends_nothing() {
-        let harness = harness("update-none", feed_server("none", false, DEB_URL, PAYLOAD, String::new()));
+        let harness = harness(
+            "update-none",
+            feed_server("none", false, DEB_URL, PAYLOAD, String::new()),
+        );
         let key = harness.pubkey();
         let mut updater = harness.updater();
         runtime().block_on(updater.check(&key));
@@ -746,7 +779,10 @@ mod tests {
             let signing = ed25519_dalek::SigningKey::from_bytes(&SEED);
             STANDARD.encode(signing.sign(PAYLOAD).to_bytes())
         };
-        let harness = harness("update-noncritical", feed_server("now", false, DEB_URL, PAYLOAD, sig));
+        let harness = harness(
+            "update-noncritical",
+            feed_server("now", false, DEB_URL, PAYLOAD, sig),
+        );
         let key = harness.pubkey();
         let mut updater = harness.updater();
         runtime().block_on(updater.check(&key));
@@ -832,7 +868,10 @@ mod tests {
             "lustless_1.0.0_amd64.deb"
         );
         // Traversal-ish or empty names fall back to a fixed safe name.
-        assert_eq!(package_name("https://packages.lustless.invalid/"), "lustless-update.deb");
+        assert_eq!(
+            package_name("https://packages.lustless.invalid/"),
+            "lustless-update.deb"
+        );
         assert_eq!(
             package_name("https://packages.lustless.invalid/a%2Fb.deb"),
             "lustless-update.deb"

@@ -422,7 +422,10 @@ host_allowlist = ["packages.lustless.invalid"]
         assert_eq!(default.update.pubkey, "");
         assert_eq!(default.update.check_sec, 86400);
         assert!(!default.update.disable_silent_upgrade);
-        assert_eq!(default.update.host_allowlist, vec!["packages.lustless.invalid"]);
+        assert_eq!(
+            default.update.host_allowlist,
+            vec!["packages.lustless.invalid"]
+        );
     }
 
     #[test]
@@ -482,9 +485,8 @@ host_allowlist = ["packages.lustless.invalid"]
 
     #[test]
     fn type_error_falls_back_to_defaults_with_warning() {
-        let (config, warnings) = LustlessConfig::parse_document(
-            "[daemon]\ndashboard_port = \"not-a-port\"\n",
-        );
+        let (config, warnings) =
+            LustlessConfig::parse_document("[daemon]\ndashboard_port = \"not-a-port\"\n");
         assert_eq!(config, LustlessConfig::default());
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].starts_with("config parse failed:"));

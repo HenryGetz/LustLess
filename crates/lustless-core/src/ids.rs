@@ -51,7 +51,9 @@ pub fn new_device_id() -> String {
 /// [`new_device_id`]: exactly `2 × DEVICE_ID_LEN` lowercase hex characters.
 pub fn is_device_id(candidate: &str) -> bool {
     candidate.len() == DEVICE_ID_LEN * 2
-        && candidate.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        && candidate
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// Lowercase hex encoding of a byte slice (no dependencies).

@@ -170,14 +170,15 @@ mod secret_service {
     /// (an empty byte array). Implementations that validate strictly reject
     /// it, which surfaces as an error here and triggers the documented file
     /// fallback — never a failure of the agent itself.
-    fn open_session(
-        conn: &zbus::blocking::Connection,
-    ) -> Result<OwnedObjectPath, String> {
+    fn open_session(conn: &zbus::blocking::Connection) -> Result<OwnedObjectPath, String> {
         let service = zbus::blocking::Proxy::new(conn, SERVICE, OBJECT, IFACE_SERVICE)
             .map_err(|err| err.to_string())?;
         let empty_array = Value::Array(zbus::zvariant::Array::new(&Signature::U8));
         let (session, _result): (OwnedObjectPath, OwnedValue) = service
-            .call("OpenSession", &("plain", Value::Value(Box::new(empty_array))))
+            .call(
+                "OpenSession",
+                &("plain", Value::Value(Box::new(empty_array))),
+            )
             .map_err(|err| err.to_string())?;
         Ok(session)
     }
@@ -222,7 +223,10 @@ mod secret_service {
             "label".to_string(),
             Value::from(format!("LustLess session token ({username})")),
         );
-        properties.insert("attributes".to_string(), Value::Dict(Dict::from(attrs(username))));
+        properties.insert(
+            "attributes".to_string(),
+            Value::Dict(Dict::from(attrs(username))),
+        );
         let secret = (
             session,
             Vec::<u8>::new(),
@@ -362,7 +366,11 @@ mod tests {
     #[test]
     fn usernames_are_sanitized_in_file_names() {
         let path = token_file("../../etc/passwd");
-        let name = path.file_name().expect("file name").to_string_lossy().into_owned();
+        let name = path
+            .file_name()
+            .expect("file name")
+            .to_string_lossy()
+            .into_owned();
         assert!(!name.contains('/'), "no separators may survive");
         assert!(name.starts_with("session-token-"));
         assert_eq!(token_file(""), token_file("_"));

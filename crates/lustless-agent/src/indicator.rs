@@ -40,36 +40,23 @@ pub fn snw_available() -> bool {
     result.unwrap_or(false)
 }
 
-/// The tray icon: a status-coloured circle SVG per state, written into a
-/// runtime directory and picked up through the indicator's icon theme path
-/// (SNI hosts render it via the desktop's SVG icon loader).
-fn svg_for(color: StatusColor) -> String {
-    let fill = match color {
-        StatusColor::Green => "#2e7d32",
-        StatusColor::Amber => "#ed6c02",
-        StatusColor::Red => "#c62828",
-        StatusColor::Gray => "#9e9e9e",
-    };
-    format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"22\" height=\"22\" \
-         viewBox=\"0 0 22 22\"><circle cx=\"11\" cy=\"11\" r=\"9\" fill=\"{fill}\" \
-         stroke=\"#ffffff\" stroke-width=\"1.5\"/></svg>"
-    )
-}
+/// The CE shield logo, 32 px PNG (`packaging/assets/lustless-32.png` —
+/// provenance and authorization in `packaging/assets/README.md` and the
+/// repo-root `AUTHORIZATION.md`). The tray icon is the real logo in every
+/// state; a status-coloured overlay would obscure the mark, so status
+/// reaches the user through the adjacent label ([`StatusColor::label`])
+/// and desktop notifications instead.
+const TRAY_ICON_PNG: &[u8] = include_bytes!("../../../packaging/assets/lustless-32.png");
 
-/// Writes one SVG per status colour into `<base>/lustless-agent-icons/` and
-/// returns that directory (used as the indicator's icon theme path).
+/// Icon name the SNI host resolves to `lustless.png` in the theme path.
+const TRAY_ICON_NAME: &str = "lustless";
+
+/// Writes the logo PNG into `<base>/lustless-agent-icons/` and returns that
+/// directory (used as the indicator's icon theme path).
 pub fn write_icon_files(base: &Path) -> std::io::Result<PathBuf> {
     let dir = base.join("lustless-agent-icons");
     fs::create_dir_all(&dir)?;
-    for color in [
-        StatusColor::Green,
-        StatusColor::Amber,
-        StatusColor::Red,
-        StatusColor::Gray,
-    ] {
-        fs::write(dir.join(format!("{}.svg", color.icon_name())), svg_for(color))?;
-    }
+    fs::write(dir.join("lustless.png"), TRAY_ICON_PNG)?;
     Ok(dir)
 }
 
@@ -89,8 +76,7 @@ impl Tray {
         }
         let theme_path = icon_dir.to_string_lossy().into_owned();
         let created = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut indicator =
-                AppIndicator::new(INDICATOR_TITLE, StatusColor::Gray.icon_name());
+            let mut indicator = AppIndicator::new(INDICATOR_TITLE, TRAY_ICON_NAME);
             indicator.set_icon_theme_path(&theme_path);
             indicator.set_title(INDICATOR_TITLE);
             indicator.set_status(AppIndicatorStatus::Active);
@@ -110,9 +96,8 @@ impl Tray {
         self.indicator.set_menu(menu);
     }
 
-    /// repaints the status colour and the adjacent label.
+    /// Updates the status label next to the (fixed) logo icon.
     pub fn set_status(&mut self, color: StatusColor) {
-        self.indicator.set_icon(color.icon_name());
         self.indicator
             .set_label(color.label(), "AAAAAAAAAAAAAAAAAAAA");
     }

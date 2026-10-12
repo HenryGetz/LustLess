@@ -46,7 +46,7 @@ bin = "/usr/bin/lustless-classifier"
 model_dir = "/usr/share/lustless/models"
 
 [upload]
-base_url = "https://api.lustless.invalid"   # deployment-specific
+base_url = ""                          # empty = upload disabled (offline-first);
 batch_size = 100
 heartbeat_sec = 600                # local bookkeeping tick (CE 600 s)
 retry_sec = 60

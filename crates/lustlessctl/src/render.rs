@@ -45,8 +45,14 @@ pub fn render_status(reply: &Value, json: bool) {
             .map(|secs| format!("{secs}s"))
             .unwrap_or_else(|| "unknown".to_string())
     );
-    let signed_in = status.get("signed_in").and_then(Value::as_bool).unwrap_or(false);
-    let username = status.get("username").and_then(Value::as_str).filter(|u| !u.is_empty());
+    let signed_in = status
+        .get("signed_in")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let username = status
+        .get("username")
+        .and_then(Value::as_str)
+        .filter(|u| !u.is_empty());
     println!(
         "  state:        {}{}",
         s("state"),
@@ -118,10 +124,7 @@ pub fn render_policy(reply: &Value, json: bool) {
             println!("has_url_filtering:      {}", snapshot.has_url_filtering);
             println!("can_override:           {}", snapshot.can_override);
             println!("is_panicked:            {}", snapshot.is_panicked);
-            println!(
-                "filter.level:           {}",
-                snapshot.filter.level
-            );
+            println!("filter.level:           {}", snapshot.filter.level);
             println!("filter.fail_closed:     {}", snapshot.filter.fail_closed);
             println!("filter.health:          {}", snapshot.filter.health);
             println!("capture.active:         {}", snapshot.capture.active);
@@ -151,11 +154,12 @@ pub fn render_dns_activity(reply: &Value, json: bool) {
         print_json(reply);
         return;
     }
-    let rows = reply.get("rows").and_then(Value::as_array).cloned().unwrap_or_default();
-    let scope = reply
-        .get("scope")
-        .and_then(Value::as_str)
-        .unwrap_or("self");
+    let rows = reply
+        .get("rows")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let scope = reply.get("scope").and_then(Value::as_str).unwrap_or("self");
     if rows.is_empty() {
         println!("No DNS activity recorded (scope: {scope}).");
         return;

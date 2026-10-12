@@ -2,7 +2,7 @@
 name = "lustless-classifier"
 version = "0.1.0"
 edition = "2021"
-description = "LustLess screenstate classifier: spool consumer, ONNX scoring engine, bundle manager"
+description = "LustLess screenstate classifier: spool consumer, CE ensemble scoring engine, bundle manager"
 license = "Apache-2.0"
 
 [[bin]]
@@ -11,31 +11,25 @@ path = "src/main.rs"
 
 [dependencies]
 lustless-core = { path = "../lustless-core" }
-lustless-capture = { path = "../lustless-capture" }
+lustless-capture = { path = "../lustless-capture", default-features = false }
 
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
 sha2.workspace = true
 
-# ONNX Runtime bindings (scoring engine, CONTRACTS §7). Explicit feature list =
-# ort's defaults with `tls-native` swapped for `tls-rustls`: the build-time
-# download of the prebuilt ONNX Runtime 1.28 binaries (ort-sys
-# `download-binaries`) then runs over ring/rustls, so no system OpenSSL is
-# needed on the build host (CONTRACTS §2 prefers the rustls family).
-# Linkage: ort-sys links the downloaded ONNX Runtime *statically*
-# (`cargo:rustc-link-lib=static=onnxruntime`) unless ORT_PREFER_DYNAMIC_LINK is
-# set, so the shipped binary needs no libonnxruntime.so at runtime — see
-# MODEL.md "Runtime".
-ort = { version = "=2.0.0-rc.13", default-features = false, features = [
-    "std",
-    "ndarray",
-    "tracing",
-    "download-binaries",
-    "tls-rustls",
-    "copy-dylibs",
-    "api-27",
-] }
+# AES-256-CBC + PKCS#7 decryption of the CE bundle artifacts (bundle-formats.md
+# §1: context-0 key + fixed IV, no MAC). RustCrypto, no OpenSSL.
+aes = "=0.8.4"
+cbc = { version = "0.1.2", features = ["alloc", "block-padding"] }
+
+# Deterministic CPU inference: parallelism over conv output channels and
+# support-vector rows only (reduction order fixed per element ⇒ reproducible).
+rayon = "=1.10.0"
+
+# Snowball English stemmer for the window-title feature extractor — the same
+# libstemmer algorithm CE embeds (`sb_stemmer_new("english")`).
+rust-stemmers = "=1.2.0"
 
 # PNG decoding of the spool images + crops for the scorer.
 image = { version = "0.25.10", default-features = false, features = ["png"] }

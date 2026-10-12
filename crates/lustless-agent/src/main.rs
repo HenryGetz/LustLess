@@ -16,15 +16,15 @@ mod secrets;
 mod status;
 mod worker;
 
-use std::cell::RefCell;
-use std::path::{Path, PathBuf};
-use std::process::Command as Proc;
 use gtk::glib::ExitCode;
+use std::cell::RefCell;
+use std::path::PathBuf;
+use std::process::Command as Proc;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gtk::prelude::*;
 use gtk::glib;
+use gtk::prelude::*;
 
 use lustless_core::config::LustlessConfig;
 use lustless_core::policy::PolicySnapshot;
@@ -38,7 +38,9 @@ const UI_PUMP: Duration = Duration::from_millis(250);
 
 fn main() -> ExitCode {
     // stderr → journald through the user unit (CONTRACTS §14 shape).
-    tracing_subscriber::fmt().with_writer(std::io::stderr).init();
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .init();
 
     let config_path = std::env::var_os("LUSTLESS_CONFIG")
         .map(PathBuf::from)
@@ -82,7 +84,7 @@ struct UiState {
 fn activate(app: &gtk::Application, config: &LustlessConfig) {
     let socket = PathBuf::from(&config.daemon.socket_path);
 
-    // Status-coloured SVG icons in the user runtime dir.
+    // The CE logo tray icon in the user runtime dir (see indicator.rs).
     let icon_dir = match indicator::write_icon_files(&glib::user_runtime_dir()) {
         Ok(dir) => dir,
         Err(err) => {
@@ -216,7 +218,7 @@ fn paint(ctx: &Ctx, state: &mut UiState, color: status::StatusColor) {
 /// cut), sign-in, filter outage, and panic.
 fn announce_transitions(
     ctx: &Ctx,
-    state: &UiState,
+    _state: &UiState,
     previous: Option<&PolicySnapshot>,
     current: &PolicySnapshot,
 ) {
@@ -287,7 +289,12 @@ fn handle_action(ctx: &Rc<Ctx>, action: &menu::Action) {
                 }
             }
         }
-        menu::Action::SignOut => match ipc::request(&ctx.socket, Code::SignOut, serde_json::json!({}), ipc::READ_TIMEOUT) {
+        menu::Action::SignOut => match ipc::request(
+            &ctx.socket,
+            Code::SignOut,
+            serde_json::json!({}),
+            ipc::READ_TIMEOUT,
+        ) {
             Ok(_) => {
                 if let Some(username) = ctx.state.borrow_mut().username.take() {
                     secrets::clear(&username);
@@ -298,10 +305,19 @@ fn handle_action(ctx: &Rc<Ctx>, action: &menu::Action) {
                     status::StatusColor::Red,
                 );
             }
-            Err(err) => notify::state_change("Sign out failed", &err.to_string(), status::StatusColor::Amber),
+            Err(err) => notify::state_change(
+                "Sign out failed",
+                &err.to_string(),
+                status::StatusColor::Amber,
+            ),
         },
         menu::Action::OpenDashboard | menu::Action::ViewActivity => {
-            match ipc::request(&ctx.socket, Code::StatusGet, serde_json::json!({}), ipc::READ_TIMEOUT) {
+            match ipc::request(
+                &ctx.socket,
+                Code::StatusGet,
+                serde_json::json!({}),
+                ipc::READ_TIMEOUT,
+            ) {
                 Ok((reply, _)) => {
                     let url = reply
                         .get("dashboard_url")
@@ -317,7 +333,12 @@ fn handle_action(ctx: &Rc<Ctx>, action: &menu::Action) {
                     } else {
                         // §13: the agent appends the session token when the
                         // daemon URL did not carry one.
-                        let token = ctx.state.borrow().username.as_deref().and_then(secrets::load);
+                        let token = ctx
+                            .state
+                            .borrow()
+                            .username
+                            .as_deref()
+                            .and_then(secrets::load);
                         let url = with_stored_token(&url, token);
                         let url = match action {
                             menu::Action::ViewActivity => activity_url(&url),
@@ -326,7 +347,11 @@ fn handle_action(ctx: &Rc<Ctx>, action: &menu::Action) {
                         open_url(&url);
                     }
                 }
-                Err(err) => notify::state_change("Dashboard unavailable", &err.to_string(), status::StatusColor::Amber),
+                Err(err) => notify::state_change(
+                    "Dashboard unavailable",
+                    &err.to_string(),
+                    status::StatusColor::Amber,
+                ),
             }
         }
         menu::Action::SetFilterLevel(level) => {
@@ -341,14 +366,27 @@ fn handle_action(ctx: &Rc<Ctx>, action: &menu::Action) {
                     &format!("Blocking level set to {level}."),
                     status::StatusColor::Green,
                 ),
-                Err(err) => notify::state_change("Filter level unchanged", &err.to_string(), status::StatusColor::Amber),
+                Err(err) => notify::state_change(
+                    "Filter level unchanged",
+                    &err.to_string(),
+                    status::StatusColor::Amber,
+                ),
             }
         }
         menu::Action::RefreshSettings => {
             // 0x53 re-pushes the user settings (§5), then repaint from 0x60.
-            let pushed =
-                ipc::request(&ctx.socket, Code::UserSettingsChange, serde_json::json!({}), ipc::READ_TIMEOUT);
-            match ipc::request(&ctx.socket, Code::PolicyGet, serde_json::json!({}), ipc::READ_TIMEOUT) {
+            let pushed = ipc::request(
+                &ctx.socket,
+                Code::UserSettingsChange,
+                serde_json::json!({}),
+                ipc::READ_TIMEOUT,
+            );
+            match ipc::request(
+                &ctx.socket,
+                Code::PolicyGet,
+                serde_json::json!({}),
+                ipc::READ_TIMEOUT,
+            ) {
                 Ok((reply, _)) => {
                     if let Ok(snapshot) =
                         serde_json::from_value::<PolicySnapshot>(reply["policy"].clone())
@@ -359,9 +397,17 @@ fn handle_action(ctx: &Rc<Ctx>, action: &menu::Action) {
                         paint(ctx, &mut state, color);
                     }
                     let _ = pushed;
-                    notify::state_change("Settings refreshed", "Settings and policy reloaded.", status::StatusColor::Green);
+                    notify::state_change(
+                        "Settings refreshed",
+                        "Settings and policy reloaded.",
+                        status::StatusColor::Green,
+                    );
                 }
-                Err(err) => notify::state_change("Refresh failed", &err.to_string(), status::StatusColor::Amber),
+                Err(err) => notify::state_change(
+                    "Refresh failed",
+                    &err.to_string(),
+                    status::StatusColor::Amber,
+                ),
             }
         }
         menu::Action::CollectDiagnostics => {
@@ -376,11 +422,20 @@ fn handle_action(ctx: &Rc<Ctx>, action: &menu::Action) {
                     "Diagnostics are being collected…",
                     status::StatusColor::Green,
                 ),
-                Err(err) => notify::state_change("Diagnostics failed", &err.to_string(), status::StatusColor::Amber),
+                Err(err) => notify::state_change(
+                    "Diagnostics failed",
+                    &err.to_string(),
+                    status::StatusColor::Amber,
+                ),
             }
         }
         menu::Action::CheckForUpdates => {
-            match ipc::request(&ctx.socket, Code::UpdateCheck, serde_json::json!({}), ipc::READ_TIMEOUT) {
+            match ipc::request(
+                &ctx.socket,
+                Code::UpdateCheck,
+                serde_json::json!({}),
+                ipc::READ_TIMEOUT,
+            ) {
                 Ok((reply, _)) => {
                     let recommendation = reply.get("recommendation");
                     let label = recommendation
@@ -394,7 +449,11 @@ fn handle_action(ctx: &Rc<Ctx>, action: &menu::Action) {
                     };
                     notify::state_change("Update check", body, status::StatusColor::Green);
                 }
-                Err(err) => notify::state_change("Update check failed", &err.to_string(), status::StatusColor::Amber),
+                Err(err) => notify::state_change(
+                    "Update check failed",
+                    &err.to_string(),
+                    status::StatusColor::Amber,
+                ),
             }
         }
         menu::Action::Quit => {
@@ -438,7 +497,11 @@ fn open_url(url: &str) {
         Ok(_) => tracing::info!(target: "agent", "opened {sanitized}"),
         Err(err) => {
             tracing::warn!(target: "agent", "xdg-open failed: {err}");
-            notify::state_change("Cannot open browser", &format!("xdg-open failed: {err}"), status::StatusColor::Amber);
+            notify::state_change(
+                "Cannot open browser",
+                &format!("xdg-open failed: {err}"),
+                status::StatusColor::Amber,
+            );
         }
     }
 }
