@@ -21,7 +21,18 @@ of very specific suffering. What you get:
 
 ## Install
 
-You have a distro. We have a package. Match them:
+Copy-paste, forget about it — detects your distro, downloads the right
+package, installs it:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/HenryGetz/LustLess/main/scripts/install.sh | sudo bash
+```
+
+(Alpine has no curl by default: `apk add curl` first, or pipe into `sh` —
+the script is POSIX. On a private checkout, `git clone` and run
+`sudo sh scripts/install.sh`.)
+
+Would rather choose yourself? You have a distro. We have a package. Match them:
 
 | Distro | File | Command |
 |---|---|---|
@@ -36,9 +47,15 @@ All of it: [latest release](https://github.com/HenryGetz/LustLess/releases/lates
 
 Can't be bothered to choose? `scripts/install.sh` figures it out for you.
 
-After install, per user: `systemctl --user enable --now lustless-agent.service`
-(Alpine does this itself; LXQt has no tray host and degrades gracefully —
-notifications + `lustlessctl status` + the dashboard.)
+After install, the tray agent is already running for your user (the installer
+starts it). **Sign in from the “LustLess” entry in your application menu** —
+it opens the sign-in dialog; once signed in, the same entry opens the
+dashboard. On a bare window manager with no tray there is still
+`lustlessctl signin <username>`.
+
+Headless/no-tray hosts (LXQt, plain Xfce without the indicator plugin): the
+same application-menu entry is the sign-in surface, and notifications report
+state changes.
 
 Uninstall reverses everything — your DNS, browser policies and polkit state
 come back exactly as found. `sudo apt purge lustless` (or the dnf/rpm/pacman/

@@ -94,8 +94,11 @@ command in the README is the fallback.
    or **OpenRC** init.d script (row 8) — enabled at boot. `lustless-agent` is a
    systemd *user* unit where user sessions are systemd (all glibc distros); on
    Alpine ship an XDG autostart `.desktop` fallback (may also be shipped
-   everywhere as a harmless second path). LXQt/Alpine have no SNI host: agent
-   degrades per `packaging/README.md`.
+   everywhere as a harmless second path). Every format also ships the
+   application-menu launcher (`/usr/share/applications/lustless-agent.desktop`,
+   `Exec=lustless-agent --show`) — the sign-in surface on desktops without an
+   SNI host, where the tray menu does not exist. LXQt/Alpine have no SNI host:
+   agent degrades per `packaging/README.md`.
 3. **Immutable (Bazzite/SteamOS):** install is `rpm-ostree install ./<rpm>` /
    `pacman -U <pkg>`; `/etc` writes must survive (they do — writable overlay);
    never write to `/usr` outside the package payload. Reboot expected after

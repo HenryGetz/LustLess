@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — sign-in surface on tray-less desktops
+
+- **Application-menu launcher** shipped by every format
+  (`/usr/share/applications/lustless-agent.desktop`,
+  `Exec=lustless-agent --show`): opens the sign-in dialog when signed out and
+  the dashboard when signed in. Previously the package shipped only the
+  hidden (`NoDisplay=true`) autostart entry, so there was nothing in the
+  application menu and no sign-in path on a desktop without an SNI host.
+- `lustless-agent --show` / re-activation of a running agent now presents
+  that surface; `--signin` is an alias.
+- `scripts/install.sh` no longer passes `--no-install-recommends` (it
+  suppressed the Xfce StatusNotifier host, `xfce4-indicator-plugin`, so the
+  tray silently ran headless on Zorin/Xubuntu) and now starts the per-user
+  tray agent for the invoking user immediately instead of waiting for the
+  next login.
+- Maintainer helper tolerates a bind-mounted `/etc/resolv.conf` (containers,
+  WSL): removal fails `EBUSY` there, which previously aborted the whole
+  `configure` step.
+
 ## v0.1.1 — multi-distro packaging + live-VM verification matrix
 
 First release shipping all four package formats and verified against seven

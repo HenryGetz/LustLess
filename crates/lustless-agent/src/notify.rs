@@ -71,7 +71,7 @@ pub fn state_change(summary: &str, body: &str, color: crate::status::StatusColor
 
 /// The §13/A5 no-SNI-host startup sentence, pinned by test.
 pub const STARTUP_TRAY_UNAVAILABLE_BODY: &str =
-    "LustLess running — tray unavailable, use `lustlessctl status` or the dashboard";
+    "LustLess is running — open “LustLess” from the application menu to sign in";
 
 /// The §13/A5 no-SNI-host startup announcement, sent once when the agent
 /// comes up without a tray.
@@ -90,10 +90,11 @@ mod tests {
     #[test]
     fn startup_message_matches_the_degradation_contract() {
         // The exact sentence required by the graceful-degradation contract
-        // (assignment A5).
+        // (assignment A5): with no tray, the application-menu launcher is
+        // the sign-in surface — the message must name it, not just the CLI.
         assert_eq!(
             STARTUP_TRAY_UNAVAILABLE_BODY,
-            "LustLess running — tray unavailable, use `lustlessctl status` or the dashboard"
+            "LustLess is running — open “LustLess” from the application menu to sign in"
         );
     }
 }

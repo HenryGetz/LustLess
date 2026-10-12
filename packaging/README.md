@@ -140,6 +140,9 @@ packaging/
   openrc/
     lustlessd.initd            OpenRC service (supervise-daemon) for Alpine
   xdg/
+    lustless-app.desktop       application-menu launcher (`lustless-agent
+                               --show`: sign-in dialog / dashboard) →
+                               /usr/share/applications/lustless-agent.desktop
     lustless-agent.desktop     XDG autostart for the tray agent (single-
                                instance safe; the only agent path on Alpine)
   systemd/

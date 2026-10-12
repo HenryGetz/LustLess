@@ -41,8 +41,8 @@ pub fn snw_available() -> bool {
 }
 
 /// The CE shield logo, 32 px PNG (`packaging/assets/lustless-32.png` —
-/// provenance and authorization in `packaging/assets/README.md` and the
-/// repo-root `AUTHORIZATION.md`). The tray icon is the real logo in every
+/// provenance and authorization in `packaging/assets/README.md`). The tray
+/// icon is the real logo in every
 /// state; a status-coloured overlay would obscure the mark, so status
 /// reaches the user through the adjacent label ([`StatusColor::label`])
 /// and desktop notifications instead.

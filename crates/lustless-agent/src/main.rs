@@ -47,16 +47,34 @@ fn main() -> ExitCode {
         .unwrap_or_else(|| PathBuf::from("/etc/lustless/lustless.toml"));
     let config = Rc::new(LustlessConfig::load(&config_path));
 
+    // `--show` (alias `--signin`) is what the application-menu launcher
+    // runs: instead of starting silently in the tray, present the sign-in
+    // dialog (signed out) or the dashboard (signed in). The flags are
+    // consumed here so GApplication never sees them; a second launch of the
+    // same command line reaches the running primary instance as a remote
+    // activation and presents the same surface (§13).
+    let show = std::env::args().any(|arg| arg == "--show" || arg == "--signin");
+
     let app = gtk::Application::builder().application_id(APP_ID).build();
     let activated = Rc::new(std::cell::Cell::new(false));
+    let live_ctx: Rc<RefCell<Option<Rc<Ctx>>>> = Rc::new(RefCell::new(None));
+    let activate_ctx = Rc::clone(&live_ctx);
     app.connect_activate(move |app| {
         // GApplication: the first launch runs the UI; later launches only
-        // forward the activation to the primary instance.
+        // forward the activation to the primary instance — and that
+        // forwarded activation is the user asking to see the agent.
         if activated.get() {
+            if let Some(ctx) = activate_ctx.borrow().as_ref() {
+                present(ctx);
+            }
             return;
         }
         activated.set(true);
-        activate(app, &config);
+        let ctx = activate(app, &config);
+        if show {
+            present(&ctx);
+        }
+        *activate_ctx.borrow_mut() = Some(ctx);
     });
     app.run_with_args::<&str>(&[])
 }
@@ -81,7 +99,7 @@ struct UiState {
     username: Option<String>,
 }
 
-fn activate(app: &gtk::Application, config: &LustlessConfig) {
+fn activate(app: &gtk::Application, config: &LustlessConfig) -> Rc<Ctx> {
     let socket = PathBuf::from(&config.daemon.socket_path);
 
     // The CE logo tray icon in the user runtime dir (see indicator.rs).
@@ -117,7 +135,9 @@ fn activate(app: &gtk::Application, config: &LustlessConfig) {
     } else {
         // No SNI host: the one-shot startup notification tells the user how
         // to reach LustLess anyway (§13 graceful degradation).
-        eprintln!("lustless-agent: tray unavailable — running headless (see `lustlessctl status`)");
+        eprintln!(
+            "lustless-agent: tray unavailable — running headless (open \u{201c}LustLess\u{201d} from the application menu, or see `lustlessctl status`)"
+        );
         notify::startup_tray_unavailable();
     }
     // Keep the menu alive for the process lifetime (the indicator holds a C
@@ -136,6 +156,27 @@ fn activate(app: &gtk::Application, config: &LustlessConfig) {
         glib::ControlFlow::Continue
     });
     ctx.app.connect_shutdown(move |_| worker_handle.stop());
+    ctx
+}
+
+/// Presents the agent to the user — the sign-in dialog when signed out, the
+/// dashboard when signed in. Reached from the application-menu launcher
+/// (`lustless-agent --show`) and from re-activation of a running agent, so
+/// the agent is reachable even on desktops with no StatusNotifier host.
+fn present(ctx: &Rc<Ctx>) {
+    let signed_in = ctx
+        .state
+        .borrow()
+        .snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.signed_in)
+        .unwrap_or(false);
+    let action = if signed_in {
+        menu::Action::OpenDashboard
+    } else {
+        menu::Action::SignIn
+    };
+    handle_action(ctx, &action);
 }
 
 fn build_menu(parent: &gtk::Menu, entries: &[menu::MenuEntry], ctx: &Rc<Ctx>) {

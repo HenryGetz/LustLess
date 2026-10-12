@@ -75,9 +75,16 @@ install -d -m 0755 "$dest/usr/share/lustless/dashboard"
 # XDG autostart fallback for the tray agent — single-instance via
 # GApplication id (crates/lustless-agent/src/main.rs), so coexistence with
 # the systemd user unit is safe; it is the ONLY path on Alpine (no systemd
-# user sessions) and covers LXQt autostart as well.
+# user sessions) and covers LXQt autostart as well. NoDisplay: autostart
+# only, the visible entry is the application-menu launcher below.
 install -D -m 0644 "$repo_root/packaging/xdg/lustless-agent.desktop" \
     "$dest/etc/xdg/autostart/lustless-agent.desktop"
+
+# Application-menu launcher: `lustless-agent --show` presents the sign-in
+# dialog (or the dashboard when signed in). This is the sign-in surface on
+# desktops with no StatusNotifier host, where the tray menu is unavailable.
+install -D -m 0644 "$repo_root/packaging/xdg/lustless-app.desktop" \
+    "$dest/usr/share/applications/lustless-agent.desktop"
 
 # systemd units (§4/§11) — used by every glibc distro in the matrix; the
 # Alpine package drops these and installs packaging/openrc/lustlessd.initd.

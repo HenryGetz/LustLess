@@ -185,15 +185,17 @@ RESOLVED_EOF
 
 write_forwarder_resolv_conf() {
     # Replaces /etc/resolv.conf (removing any symlink first); the original is
-    # already captured under $PREV_DIR.
-    rm -f /etc/resolv.conf
+    # already captured under $PREV_DIR. When the path is a bind mount
+    # (containers, WSL) removal fails with EBUSY — overwrite the file in
+    # place instead of aborting the whole configure.
+    rm -f /etc/resolv.conf 2>/dev/null || true
     cat > /etc/resolv.conf <<'RESOLV_EOF'
 # Written by the lustless package (maintainer) — system DNS is forwarded to
 # the LustLess filtering resolver on 127.0.0.2 (CONTRACTS §8). removal
 # restores the previous file.
 nameserver 127.0.0.2
 RESOLV_EOF
-    chmod 0644 /etc/resolv.conf
+    chmod 0644 /etc/resolv.conf 2>/dev/null || true
 }
 
 apply_nm_redirect() {
@@ -271,16 +273,20 @@ restore_resolv_conf() {
     rc=/etc/resolv.conf
     if [ -f "$PREV_DIR/resolv.conf.link" ]; then
         target=$(cat "$PREV_DIR/resolv.conf.link")
-        rm -f "$rc"
-        ln -s "$target" "$rc"
+        rm -f "$rc" 2>/dev/null || true
+        ln -sf "$target" "$rc" 2>/dev/null \
+            || cp -p "$PREV_DIR/resolv.conf.file" "$rc" 2>/dev/null \
+            || true
         rm -f "$PREV_DIR/resolv.conf.link"
     elif [ -f "$PREV_DIR/resolv.conf.file" ]; then
-        rm -f "$rc"
+        # Bind-mounted resolv.conf cannot be unlinked (EBUSY) — writing the
+        # backup through the mount restores the same bytes either way.
+        rm -f "$rc" 2>/dev/null || true
         cp -p "$PREV_DIR/resolv.conf.file" "$rc"
         rm -f "$PREV_DIR/resolv.conf.file"
     else
         # Install saw no resolv.conf at all — remove the file we wrote.
-        rm -f "$rc"
+        rm -f "$rc" 2>/dev/null || true
     fi
     rm -f "$PREV_DIR/resolv.conf.absent"
 }

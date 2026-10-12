@@ -45,6 +45,27 @@ Two consequences:
   packages); `so:` auto-deps from scanelf stripped where the guest cannot
   reach community.
 
+## Sign-in surface (application menu / tray-less)
+
+Every format now ships `/usr/share/applications/lustless-agent.desktop`
+(`Exec=lustless-agent --show`) — verified present in all four packages
+(`dpkg-deb -c`, `rpm -qlp`, `tar -t`). Container proof (ubuntu:24.04, GTK +
+Xvfb + `dbus-run-session`):
+
+- `curl …/scripts/install.sh | bash` installs the `.deb` and the new
+  launcher survives configure;
+- `lustless-agent --show` opens a window titled "Sign in to LustLess"
+  (`xdotool search --name`), i.e. the sign-in dialog is reachable with no
+  StatusNotifier host at all;
+- re-launching `lustless-agent --show` while the agent runs forwards
+  activation to the primary instance and presents the same surface.
+
+Defect this section covers: releases up to v0.1.1 shipped only the
+`NoDisplay=true` autostart entry (nothing in the menu) and `install.sh`
+passed `--no-install-recommends`, which suppressed the Xfce SNI host — on a
+Zorin Lite / Xubuntu desktop the agent then ran headless with no visible
+sign-in path.
+
 ## How to reproduce a run
 
 ```bash

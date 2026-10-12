@@ -43,6 +43,7 @@ cp -a /src/target/pkg-root/. %{buildroot}/
 %files
 %config(noreplace) /etc/lustless/lustless.toml
 /etc/xdg/autostart/lustless-agent.desktop
+/usr/share/applications/lustless-agent.desktop
 /usr/bin/lustlessd
 /usr/bin/lustless-classifier
 /usr/bin/lustless-agent

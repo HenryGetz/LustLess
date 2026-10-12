@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=LustLess
+GenericName=Accountability Agent
+Comment=Sign in, check status and open the LustLess dashboard
+Exec=/usr/bin/lustless-agent --show
+Icon=lustless
+Terminal=false
+Categories=Network;
+StartupNotify=true
+X-GNOME-UsesNotifications=true
+Keywords=accountability;filter;lustless;covenant;
