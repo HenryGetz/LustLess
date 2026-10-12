@@ -1,0 +1,8 @@
+#!/bin/sh
+# apk post-upgrade: reconfigure (helper is present — files already
+# replaced).
+HELPER=/usr/lib/lustless/lustless-maintainer
+[ -x "$HELPER" ] || exit 0
+ver=$(apk info --print-version lustless 2>/dev/null || echo unknown)
+"$HELPER" configure "$ver" || :
+exit 0

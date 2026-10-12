@@ -9,3 +9,11 @@ target/
 *.deb
 uwp_str.txt
 vs_str.txt
+
+# Built packages (rebuildable via packaging/build-*.sh)
+*.rpm
+*.pkg.tar.zst
+*.apk
+
+# Python cache
+__pycache__/

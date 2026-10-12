@@ -1,0 +1,6 @@
+#!/bin/sh
+# apk pre-upgrade: teardown so the new package's post-upgrade re-applies
+# everything from scratch (mirrors the deb prerm upgrade path).
+HELPER=/usr/lib/lustless/lustless-maintainer
+[ -x "$HELPER" ] && "$HELPER" remove || :
+exit 0

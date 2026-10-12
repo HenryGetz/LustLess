@@ -1,0 +1,670 @@
+#!/bin/sh
+# lustless-maintainer — single-source package lifecycle for every format.
+#
+# Shipped as a payload file at /usr/lib/lustless/lustless-maintainer; each
+# package format's scriptlets are thin callers:
+#
+#   configure <version>   install/upgrade configuration (postinst configure,
+#                         rpm %post, arch post_install/post_upgrade, apk
+#                         .post-install/.post-upgrade)
+#   remove                pre-removal teardown: bounded outbox flush, stop
+#                         the daemon, reverse the DNS redirect, remove/
+#                         restore browser policies (prerm remove|deconfigure|
+#                         upgrade, rpm %preun, arch pre_remove, apk
+#                         pre-deinstall)
+#   purge                 finalize removal: verify/repair DNS restoration,
+#                         remove the polkit action, move state to the
+#                         PreviousConfiguration backup, drop logs, reload
+#                         the service manager (rpm %preun on erase, arch
+#                         pre_remove, postrm-equivalent paths)
+#
+# Behavior is ported verbatim from the reference Debian scriptlets
+# (packaging/debian/{postinst,prerm,postrm}) with OpenRC branches added for
+# Alpine (PACKAGING-MATRIX §1/§3). POSIX sh: dash and busybox ash compatible.
+# All subcommands are idempotent and must never fail an install on a soft
+# error — hard errors (set -e) only where a partial state would be unsafe.
+set -e
+
+PREV_DIR=/var/lib/lustless/previous-config
+STATE_DIR=/var/lib/lustless
+POLKIT_SRC=/usr/share/lustless/polkit/org.lustless.policy
+POLKIT_DST=/usr/share/polkit-1/actions/org.lustless.policy
+BROWSER_POLICY_SRC=/usr/share/lustless/browser-policies
+BROWSER_POLICY_LIST="$PREV_DIR/browser-policies.list"
+RESOLVED_DROPIN=/etc/systemd/resolved.conf.d/lustless.conf
+NM_DISPATCHER=/etc/NetworkManager/dispatcher.d/90-lustless-dns
+
+log() { echo "lustless: $*" >&2; }
+
+sanitize_path() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_'; }
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# Service-manager operations, systemd-first (all glibc distros), OpenRC
+# fallback (Alpine). deb-systemd-helper/invoke are preferred on dpkg systems
+# (chroot/policy-safe semantics, exactly as the reference postinst/prerm).
+reload_manager() {
+    if have deb-systemd-helper || have deb-systemd-invoke; then
+        have systemctl && systemctl daemon-reload >/dev/null 2>&1 || true
+    elif have systemctl; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+}
+
+enable_and_start_daemon() {
+    if have rc-update && have rc-service; then
+        # OpenRC (Alpine): the initd ships in /etc/init.d; add then start.
+        rc-update add lustlessd default >/dev/null 2>&1 || true
+        rc-service lustlessd start \
+            || log "warning: lustlessd did not start (see: rc-service lustlessd status)"
+        return 0
+    fi
+    if have systemctl; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+    if have deb-systemd-helper; then
+        deb-systemd-helper enable lustlessd.service >/dev/null || true
+    elif have systemctl; then
+        systemctl enable lustlessd.service >/dev/null 2>&1 || true
+    fi
+    if have deb-systemd-invoke; then
+        deb-systemd-invoke start lustlessd.service \
+            || log "warning: lustlessd.service did not start (see: systemctl status lustlessd.service)"
+    elif have systemctl; then
+        systemctl start lustlessd.service \
+            || log "warning: lustlessd.service did not start (see: systemctl status lustlessd.service)"
+    fi
+}
+
+stop_daemon() {
+    if have rc-service; then
+        rc-service lustlessd stop >/dev/null 2>&1 || true
+        return 0
+    fi
+    if have deb-systemd-invoke; then
+        deb-systemd-invoke stop lustlessd.service >/dev/null 2>&1 || true
+    elif have systemctl; then
+        systemctl stop lustlessd.service >/dev/null 2>&1 || true
+    fi
+}
+
+flush_outbox() {
+    # Bounded flush of pending uploads (CONTRACTS §11): absence or timeout
+    # must never block an install/upgrade/uninstall.
+    if [ -x /usr/bin/lustlessctl ] && have timeout; then
+        timeout 10 /usr/bin/lustlessctl flush >/dev/null 2>&1 \
+            || log "flush skipped or timed out (continuing)"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# State directories (§4). File artifacts (outbox.db, settings DBs, spool
+# transactions, logs) are created 0600/0700 by the daemon itself.
+# ---------------------------------------------------------------------------
+create_state_dirs() {
+    install -d -m 0700 "$STATE_DIR"
+    install -d -m 0700 "$PREV_DIR"
+    install -d -m 0700 "$STATE_DIR/spool"
+    install -d -m 0755 /var/log/lustless
+    install -d -m 0755 /var/log/lustless/classifier
+    # Model/drop dirs (§4, 0755): empty until the model bundle is dropped in.
+    install -d -m 0755 /usr/share/lustless/models
+    install -d -m 0755 /usr/share/lustless/dashboard
+}
+
+# ---------------------------------------------------------------------------
+# DNS redirect — detect the active resolver stack, back up, apply.
+# ---------------------------------------------------------------------------
+
+detect_dns_stack() {
+    if [ -d /run/systemd/system ]; then
+        # Live system: ask the service manager what is actually running.
+        if have systemctl && systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+            echo resolved
+        elif have systemctl && systemctl is-active --quiet NetworkManager 2>/dev/null; then
+            echo networkmanager
+        else
+            echo resolvconf-file
+        fi
+    else
+        # Package-scriptlet chroot (rpm-ostree layering on Bazzite/SteamOS,
+        # some image builds): no PID1 here — infer from static configuration.
+        if [ -L /etc/resolv.conf ] \
+            && readlink /etc/resolv.conf 2>/dev/null | grep -q 'resolved'; then
+            echo resolved
+        elif [ -d /etc/NetworkManager ]; then
+            echo networkmanager
+        else
+            echo resolvconf-file
+        fi
+    fi
+}
+
+# Record the prior /etc/resolv.conf exactly as found (symlink target, file
+# copy, or "absent") so remove can restore it byte-for-byte.
+backup_resolv_conf() {
+    rc=/etc/resolv.conf
+    rm -f "$PREV_DIR/resolv.conf.link" "$PREV_DIR/resolv.conf.file" \
+        "$PREV_DIR/resolv.conf.absent"
+    if [ -L "$rc" ]; then
+        readlink "$rc" > "$PREV_DIR/resolv.conf.link"
+    elif [ -f "$rc" ]; then
+        cp -p "$rc" "$PREV_DIR/resolv.conf.file"
+    else
+        : > "$PREV_DIR/resolv.conf.absent"
+    fi
+}
+
+apply_resolved_redirect() {
+    install -d -m 0755 /etc/systemd/resolved.conf.d
+    # Only capture the pre-existing drop-in when this is a fresh (re)install;
+    # dns-stack is written at the end of the DNS step and removed by remove.
+    if [ ! -f "$PREV_DIR/dns-stack" ] && [ -e "$RESOLVED_DROPIN" ] \
+        && [ ! -e "$PREV_DIR/resolved-dropin.orig" ]; then
+        cp -p "$RESOLVED_DROPIN" "$PREV_DIR/resolved-dropin.orig"
+    fi
+    cat > "$RESOLVED_DROPIN" <<'RESOLVED_EOF'
+# Written by the lustless package (maintainer) — points system DNS at the
+# LustLess filtering forwarder on 127.0.0.2 (CONTRACTS §8). removal restores
+# the previous configuration.
+[Resolve]
+# Global DNS = our forwarder; Domains=~. makes this route win over per-link
+# DHCP DNS so no lookup bypasses the filter.
+DNS=127.0.0.2
+Domains=~.
+# No fallback resolvers: with the forwarder down, lookups fail closed
+# instead of leaking unfiltered (dns.fail_closed_when_signed_out semantics).
+FallbackDNS=
+RESOLVED_EOF
+    chmod 0644 "$RESOLVED_DROPIN"
+    if have systemctl && systemctl is-active --quiet systemd-resolved; then
+        systemctl restart systemd-resolved
+        resolvectl flush-caches 2>/dev/null || true
+    fi
+}
+
+write_forwarder_resolv_conf() {
+    # Replaces /etc/resolv.conf (removing any symlink first); the original is
+    # already captured under $PREV_DIR.
+    rm -f /etc/resolv.conf
+    cat > /etc/resolv.conf <<'RESOLV_EOF'
+# Written by the lustless package (maintainer) — system DNS is forwarded to
+# the LustLess filtering resolver on 127.0.0.2 (CONTRACTS §8). removal
+# restores the previous file.
+nameserver 127.0.0.2
+RESOLV_EOF
+    chmod 0644 /etc/resolv.conf
+}
+
+apply_nm_redirect() {
+    install -d -m 0755 /etc/NetworkManager/dispatcher.d
+    # NetworkManager rewrites /etc/resolv.conf on lease/hostname changes, so
+    # the redirect is re-applied by a dispatcher script after each such event.
+    cat > "$NM_DISPATCHER" <<'NM_EOF'
+#!/bin/sh
+# NetworkManager dispatcher written by the lustless package (maintainer).
+# Re-applies the LustLess DNS redirect (127.0.0.2) after NetworkManager
+# rewrites /etc/resolv.conf. Removed on uninstall.
+set -u
+case "${2:-}" in
+    up|dhcp4-change|dhcp6-change|connectivity-change)
+        rm -f /etc/resolv.conf
+        cat > /etc/resolv.conf <<'NMRESOLV_EOF'
+# Written by LustLess (NetworkManager dispatcher 90-lustless-dns) — system
+# DNS is forwarded to the LustLess filtering resolver on 127.0.0.2.
+nameserver 127.0.0.2
+NMRESOLV_EOF
+        chmod 0644 /etc/resolv.conf
+        ;;
+esac
+exit 0
+NM_EOF
+    chmod 0755 "$NM_DISPATCHER"
+    write_forwarder_resolv_conf
+}
+
+install_dns_redirect() {
+    detected="$1"
+    if [ ! -f "$PREV_DIR/dns-stack" ]; then
+        # Fresh install (or first configure after remove): capture originals.
+        case "$detected" in
+            resolved) : ;;            # drop-in backup handled in apply step
+            networkmanager|resolvconf-file) backup_resolv_conf ;;
+        esac
+    fi
+    # §8 integration requirement: the forwarder's user path needs the
+    # pre-redirect upstreams — once system DNS points at 127.0.0.2, a
+    # `user_resolvers = ["system"]` would resolve only our own loopback.
+    capture_upstream_resolvers "$detected"
+    case "$detected" in
+        resolved)         apply_resolved_redirect ;;
+        networkmanager)   apply_nm_redirect ;;
+        resolvconf-file)  write_forwarder_resolv_conf ;;
+    esac
+    echo "$detected" > "$PREV_DIR/dns-stack"
+}
+
+# Rewrite `user_resolvers` in the shipped config with the pre-redirect
+# upstream resolvers (address list, excluding loopback).
+capture_upstream_resolvers() {
+    cfg=/etc/lustless/lustless.toml
+    [ -f "$cfg" ] || return 0
+    upstreams=""
+    if [ "$1" = "resolved" ] && have resolvectl; then
+        upstreams=$(resolvectl dns 2>/dev/null \
+            | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | sort -u | tr '\n' ' ')
+    fi
+    if [ -z "$upstreams" ] && [ -f "$PREV_DIR/resolv.conf.file" ]; then
+        upstreams=$(grep -E '^nameserver' "$PREV_DIR/resolv.conf.file" \
+            | awk '{print $2}' | grep -v '^127\.' | sort -u | tr '\n' ' ')
+    fi
+    upstreams=$(printf '%s' "$upstreams" | sed 's/ *$//')
+    if [ -n "$upstreams" ]; then
+        list=$(printf '%s' "$upstreams" \
+            | sed 's/^/"/; s/ /", "/g; s/ *$//; s/"$/"/')
+        sed -i "s|^user_resolvers = .*|user_resolvers = [$list]|" "$cfg"
+    fi
+}
+
+# Restore /etc/resolv.conf exactly as found (inverse of backup_resolv_conf).
+restore_resolv_conf() {
+    rc=/etc/resolv.conf
+    if [ -f "$PREV_DIR/resolv.conf.link" ]; then
+        target=$(cat "$PREV_DIR/resolv.conf.link")
+        rm -f "$rc"
+        ln -s "$target" "$rc"
+        rm -f "$PREV_DIR/resolv.conf.link"
+    elif [ -f "$PREV_DIR/resolv.conf.file" ]; then
+        rm -f "$rc"
+        cp -p "$PREV_DIR/resolv.conf.file" "$rc"
+        rm -f "$PREV_DIR/resolv.conf.file"
+    else
+        # Install saw no resolv.conf at all — remove the file we wrote.
+        rm -f "$rc"
+    fi
+    rm -f "$PREV_DIR/resolv.conf.absent"
+}
+
+restore_dns() {
+    stack=$(cat "$PREV_DIR/dns-stack" 2>/dev/null || true)
+    case "$stack" in
+        resolved)
+            rm -f "$RESOLVED_DROPIN"
+            if [ -f "$PREV_DIR/resolved-dropin.orig" ]; then
+                mv "$PREV_DIR/resolved-dropin.orig" "$RESOLVED_DROPIN"
+            fi
+            if have systemctl && systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+                systemctl restart systemd-resolved
+                resolvectl flush-caches 2>/dev/null || true
+            fi
+            ;;
+        networkmanager)
+            rm -f "$NM_DISPATCHER"
+            restore_resolv_conf
+            ;;
+        resolvconf-file)
+            restore_resolv_conf
+            ;;
+        ""|*)
+            # Nothing recorded (never configured / already restored).
+            ;;
+    esac
+    rm -f "$PREV_DIR/dns-stack"
+}
+
+# ---------------------------------------------------------------------------
+# Browser DoH-lockdown policies (§15). Chromium-family managed policies live
+# in per-vendor namespaces (lustless.json), so our filename never collides
+# with an admin's file; Firefox's fixed-name policies.json is merged, never
+# clobbered. Every action is recorded so removal removes ONLY what we
+# installed (or restores what we merged/replaced).
+# ---------------------------------------------------------------------------
+
+record_policy() { # <mode> <target> <backup-or-empty>
+    printf '%s|%s|%s\n' "$1" "$2" "$3" >> "$BROWSER_POLICY_LIST"
+}
+
+install_chromium_policy() { # <source-name> <target-path>
+    src=$BROWSER_POLICY_SRC/$1
+    dst=$2
+    backup=$PREV_DIR/browser-backup-$(sanitize_path "$dst")
+    if [ ! -e "$dst" ]; then
+        rm -f "$backup"
+        install -D -m 0644 "$src" "$dst"
+        record_policy installed "$dst" ""
+    elif cmp -s "$src" "$dst"; then
+        # Already our file from a previous run.
+        if [ -f "$backup" ]; then
+            record_policy replaced "$dst" "$backup"
+        else
+            record_policy installed "$dst" ""
+        fi
+    else
+        # Differing file at our reserved name (lustless.json): keep the
+        # original, then overwrite with ours.
+        if [ ! -f "$backup" ]; then
+            cp -p "$dst" "$backup"
+        fi
+        install -m 0644 "$src" "$dst"
+        record_policy replaced "$dst" "$backup"
+    fi
+}
+
+# Merge only the DNSOverHTTPS policy into an existing Firefox policies.json;
+# returns non-zero if the file is not valid JSON (then we leave it alone).
+merge_firefox_dns_policy() {
+    python3 - "$1" <<'PYEOF'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        doc = json.load(fh)
+except Exception:
+    sys.exit(1)
+if not isinstance(doc, dict):
+    sys.exit(1)
+policies = doc.setdefault("policies", {})
+if not isinstance(policies, dict):
+    sys.exit(1)
+policies["DNSOverHTTPS"] = {"Enabled": False, "Locked": True}
+try:
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+except Exception:
+    sys.exit(1)
+PYEOF
+}
+
+install_firefox_policy() { # <target-policies.json>
+    src=$BROWSER_POLICY_SRC/firefox.json
+    dst=$1
+    backup=$PREV_DIR/browser-backup-$(sanitize_path "$dst")
+    if [ ! -e "$dst" ]; then
+        rm -f "$backup"
+        install -D -m 0644 "$src" "$dst"
+        record_policy installed "$dst" ""
+    elif cmp -s "$src" "$dst"; then
+        if [ -f "$backup" ]; then
+            record_policy replaced "$dst" "$backup"
+        else
+            record_policy installed "$dst" ""
+        fi
+    else
+        # An admin's file: keep the original, then merge in only our
+        # DNSOverHTTPS policy (never clobber). Requires python3; without it
+        # (or with invalid JSON) the file is left untouched.
+        if [ ! -f "$backup" ]; then
+            cp -p "$dst" "$backup"
+        fi
+        if have python3 && merge_firefox_dns_policy "$dst"; then
+            record_policy merged "$dst" "$backup"
+            log "merged DoH lockdown into existing $dst"
+        else
+            rm -f "$backup"
+            log "warning: existing $dst could not be merged (python3 missing or invalid JSON) — left untouched; add DNSOverHTTPS {Enabled:false, Locked:true} manually"
+        fi
+    fi
+}
+
+# Browser install targets per family. Debian-family paths plus snap areas are
+# always attempted (harmless when absent); rpm-ostree/Fedora/Arch browsers
+# live under /usr/lib/<vendor> — add their policies.json paths here when a
+# distro ships a browser that reads managed policies from a new location.
+install_browser_policies() {
+    : > "$BROWSER_POLICY_LIST"   # rebuilt per configure; remove consumes it
+    install_chromium_policy chrome.json /etc/opt/chrome/policies/managed/lustless.json
+    install_chromium_policy chromium.json /etc/chromium/policies/managed/lustless.json
+    # Snap Chromium (the default browser on Xubuntu, Lubuntu and Ubuntu):
+    # unlike the deb, it reads managed policies from its writable data area
+    # /var/snap/chromium/current (current → <revision>), not /etc/chromium.
+    if [ -d /var/snap/chromium/current ]; then
+        install_chromium_policy chromium.json \
+            /var/snap/chromium/current/etc/chromium/policies/managed/lustless.json
+    fi
+    install_chromium_policy brave.json /etc/brave/policies/managed/lustless.json
+    install_chromium_policy edge.json /etc/microsoft-edge/policies/managed/lustless.json
+    # Firefox: write into each INSTALLED Firefox's policy locations — the
+    # deb path (reference behavior) plus Mozilla's standard
+    # <install>/distribution/policies.json used by the Fedora rpm and Arch
+    # package. A location is only touched when its browser directory exists,
+    # so systems without Firefox get no stray files.
+    install_firefox_policy_present /usr/lib/firefox/policies.json
+    install_firefox_policy_present /usr/lib/firefox/distribution/policies.json
+    install_firefox_policy_present /usr/lib64/firefox/distribution/policies.json
+    install_firefox_policy_present /usr/lib/firefox-esr/distribution/policies.json
+    install_firefox_policy_present /usr/lib64/firefox-esr/distribution/policies.json
+    # Snap Firefox: the snap's policies.json lives inside its read-only
+    # squashfs mount — normally not writable, so the lockdown cannot be
+    # applied from outside (documented caveat, packaging/README.md).
+    snap_ff=$(readlink -f /snap/firefox/current 2>/dev/null || true)
+    if [ -n "$snap_ff" ] && [ -d "$snap_ff/usr/lib/firefox" ]; then
+        snap_dst=$snap_ff/usr/lib/firefox/policies.json
+        if [ -w "$snap_ff/usr/lib/firefox" ]; then
+            install_firefox_policy "$snap_dst"
+            log "installed DoH lockdown into snap Firefox at $snap_dst (a snap refresh reverts this — see packaging/README.md)"
+        else
+            log "warning: snap Firefox found but $snap_dst is on a read-only filesystem; the DoH lockdown cannot be applied to the snap. Prefer the deb build of Firefox so DNS filtering cannot be bypassed."
+        fi
+    fi
+}
+
+# Wrapper: only touch a Firefox policy path whose browser directory already
+# exists (distribution/ subdirs are created by install -D when the browser's
+# lib dir is present).
+install_firefox_policy_present() {
+    target=$1
+    browser_dir=${target%%/distribution/*}
+    if [ "$browser_dir" = "$target" ]; then
+        browser_dir=${target%%/policies.json}
+    fi
+    if [ -d "$browser_dir" ]; then
+        install_firefox_policy "$target"
+    fi
+}
+
+remove_browser_policies() {
+    if [ ! -f "$BROWSER_POLICY_LIST" ]; then
+        return 0
+    fi
+    while IFS='|' read -r mode dst backup; do
+        [ -n "$mode" ] || continue
+        case "$mode" in
+            installed)
+                rm -f "$dst"
+                ;;
+            replaced|merged)
+                if [ -n "$backup" ] && [ -f "$backup" ]; then
+                    cp -p "$backup" "$dst"
+                    rm -f "$backup"
+                else
+                    rm -f "$dst"
+                fi
+                ;;
+        esac
+    done < "$BROWSER_POLICY_LIST"
+    rm -f "$BROWSER_POLICY_LIST"
+}
+
+# ---------------------------------------------------------------------------
+# Polkit action file (§4 path /usr/share/polkit-1/actions/org.lustless.policy)
+# ---------------------------------------------------------------------------
+install_polkit_action() {
+    if [ ! -d /usr/share/polkit-1/actions ]; then
+        log "warning: polkit actions directory absent — skipping action install"
+        return 0
+    fi
+    if [ ! -f "$PREV_DIR/polkit-action.orig" ] && [ -e "$POLKIT_DST" ] \
+        && ! cmp -s "$POLKIT_SRC" "$POLKIT_DST"; then
+        cp -p "$POLKIT_DST" "$PREV_DIR/polkit-action.orig"
+    fi
+    install -m 0644 "$POLKIT_SRC" "$POLKIT_DST"
+}
+
+remove_polkit_action() {
+    if [ -f "$PREV_DIR/polkit-action.orig" ]; then
+        mv "$PREV_DIR/polkit-action.orig" "$POLKIT_DST"
+        chmod 0644 "$POLKIT_DST" 2>/dev/null || true
+    else
+        rm -f "$POLKIT_DST"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Flavor-aware end-of-install hint (CONTRACTS §1 matrix): the SNI tray host
+# differs per desktop shell — Xfce needs xfce4-indicator-plugin, GNOME needs
+# the AppIndicator extension (preinstalled-enabled on Ubuntu), LXQt has no
+# SNI host and the agent degrades to notifications + lustlessctl + dashboard.
+# ---------------------------------------------------------------------------
+print_flavor_hint() {
+    desktop=$(printf '%s' "${XDG_CURRENT_DESKTOP:-}" | tr '[:upper:]' '[:lower:]')
+    if [ -z "$desktop" ]; then
+        # sudo/package-manager calls may not preserve the session env: fall
+        # back to the session files of installed graphical desktops.
+        if [ -e /usr/share/xsessions/lxqt.desktop ] \
+            || [ -e /usr/share/wayland-sessions/lxqt.desktop ]; then
+            desktop=lxqt
+        elif [ -e /usr/share/xsessions/xfce.desktop ]; then
+            desktop=xfce
+        elif [ -e /usr/share/xsessions/gnome.desktop ] \
+            || [ -e /usr/share/wayland-sessions/gnome.desktop ] \
+            || [ -e /usr/share/xsessions/cinnamon.desktop ] \
+            || [ -e /usr/share/xsessions/ubuntu.desktop ] \
+            || [ -e /usr/share/wayland-sessions/ubuntu.desktop ] \
+            || [ -e /usr/share/xsessions/zorin.desktop ]; then
+            desktop=gnome
+        fi
+    fi
+    case "$desktop" in
+        *xfce*)
+            log "flavor hint (Xfce — Zorin OS Lite / Xubuntu): the tray icon needs"
+            log "an SNI host. Install xfce4-indicator-plugin and add it to a panel"
+            log "if the icon is missing (pulled in automatically by apt as a"
+            log "Recommends):"
+            log "  sudo apt install xfce4-indicator-plugin"
+            ;;
+        *cinnamon*)
+            # Cinnamon (Linux Mint) hosts SNI applets natively — nothing to do.
+            ;;
+        *lxqt*)
+            log "flavor hint (LXQt — Lubuntu): no SNI tray host on LXQt. The agent"
+            log "degrades gracefully — accountability continues; you get desktop"
+            log "notifications, 'lustlessctl status' for state, and the dashboard"
+            log "at http://127.0.0.1:8760."
+            ;;
+        *gnome*|*ubuntu*|*zorin*)
+            # GNOME — Ubuntu 24.04 and Zorin OS 17 Core ship the AppIndicator
+            # extension enabled by default; Fedora/Bazzite GNOME: install the
+            # AppIndicator extension if the tray icon is missing.
+            ;;
+    esac
+}
+
+write_install_marker() { # <version> <dns-stack>
+    cat > "$STATE_DIR/last-install" <<EOF
+package=lustless
+version=$1
+configured_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+dns_stack=$2
+EOF
+    chmod 0600 "$STATE_DIR/last-install"
+}
+
+# ---------------------------------------------------------------------------
+# purge-time safety net (reference: debian/postrm verify_dns_restored) —
+# repair leftovers from a crashed/forced earlier removal, then finalize.
+# ---------------------------------------------------------------------------
+verify_dns_restored() {
+    if [ -e "$RESOLVED_DROPIN" ]; then
+        rm -f "$RESOLVED_DROPIN"
+        log "removed leftover $RESOLVED_DROPIN"
+        if have systemctl && systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+            systemctl restart systemd-resolved || true
+            resolvectl flush-caches 2>/dev/null || true
+        fi
+    fi
+    if [ -e "$NM_DISPATCHER" ]; then
+        rm -f "$NM_DISPATCHER"
+        log "removed leftover $NM_DISPATCHER"
+    fi
+    if [ -f "$PREV_DIR/resolved-dropin.orig" ]; then
+        mv "$PREV_DIR/resolved-dropin.orig" "$RESOLVED_DROPIN"
+    fi
+    if [ -f "$PREV_DIR/resolv.conf.file" ] || [ -f "$PREV_DIR/resolv.conf.link" ]; then
+        restore_resolv_conf
+    fi
+    rm -f "$PREV_DIR/resolv.conf.absent"
+    if [ -f /etc/resolv.conf ] \
+        && grep -q '^nameserver 127\.0\.0\.2$' /etc/resolv.conf; then
+        log "WARNING: /etc/resolv.conf still points at 127.0.0.2 and no backup was available; restore your resolver configuration manually."
+    else
+        log "DNS configuration verified restored"
+    fi
+}
+
+purge_state() {
+    if [ -d "$STATE_DIR" ]; then
+        backup=/var/lib/lustless-PreviousConfiguration
+        if [ -e "$backup" ]; then
+            backup=$backup-$(date -u +%Y%m%dT%H%M%SZ)
+        fi
+        mv "$STATE_DIR" "$backup"
+        log "state kept at $backup (documented deviation; remove with: rm -rf $backup)"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+cmd_configure() {
+    version=${1:-unknown}
+    create_state_dirs
+    stack=$(detect_dns_stack)
+    log "detected resolver stack: $stack"
+    install_dns_redirect "$stack"
+    install_browser_policies
+    install_polkit_action
+    enable_and_start_daemon
+    write_install_marker "$version" "$stack"
+    if have logger; then
+        logger -t lustless-postinst \
+            "installActivityRecord: lustless $version configured (dns_stack=$stack)" \
+            || true
+    fi
+    log "installed. Per-user tray agent — each user should run:"
+    log "  systemctl --user daemon-reload"
+    log "  systemctl --user enable --now lustless-agent.service"
+    print_flavor_hint
+}
+
+cmd_remove() {
+    flush_outbox
+    stop_daemon
+    restore_dns
+    remove_browser_policies
+}
+
+cmd_purge() {
+    verify_dns_restored
+    # Must run before purge_state moves the backup tree away.
+    remove_polkit_action
+    purge_state
+    rm -rf /var/log/lustless
+    rmdir /etc/lustless 2>/dev/null || true
+    reload_manager
+}
+
+case "${1:-}" in
+    configure) shift; cmd_configure "$@" ;;
+    remove)    shift; cmd_remove "$@" ;;
+    purge)     shift; cmd_purge "$@" ;;
+    *)
+        echo "usage: lustless-maintainer {configure <version>|remove|purge}" >&2
+        exit 2
+        ;;
+esac
+
+exit 0

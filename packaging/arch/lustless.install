@@ -1,0 +1,32 @@
+# pacman install script for lustless — thin calls into the payload helper
+# /usr/lib/lustless/lustless-maintainer (PACKAGING-MATRIX §3).
+# pacman order: pre_upgrade → files replaced → post_upgrade; on erase:
+# pre_remove (files present) → files removed → post_remove.
+
+post_install() {
+    /usr/lib/lustless/lustless-maintainer configure "$1" || :
+    echo "Per-user tray agent — each graphical user should run:"
+    echo "  systemctl --user enable --now lustless-agent.service"
+}
+
+pre_upgrade() {
+    /usr/lib/lustless/lustless-maintainer remove || :
+}
+
+post_upgrade() {
+    /usr/lib/lustless/lustless-maintainer configure "$1" || :
+}
+
+pre_remove() {
+    # Files present here: full teardown, then finalize (Arch has no
+    # separate purge step; the state-keeping deviation still applies).
+    /usr/lib/lustless/lustless-maintainer remove || :
+    /usr/lib/lustless/lustless-maintainer purge || :
+}
+
+post_remove() {
+    # Payload gone — reload the service manager only.
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+}

@@ -1,126 +1,25 @@
 #!/bin/sh
 # lustless maintainer script — prerm (CONTRACTS §11 uninstall order).
 #
-# remove / deconfigure / upgrade all run the full teardown so every backup
-# taken by postinst is restored symmetrically; postinst re-applies everything
-# on the subsequent configure (upgrade). Uninstall MUST leave the system's
-# DNS configuration exactly as found (§11).
-#
-#   1. bounded flush of pending uploads (10 s)
-#   2. stop lustlessd.service
-#   3. reverse the DNS redirect from our backup
-#   4. remove ONLY the browser policy files we installed (or restore the
-#      originals we merged/replaced)
+# Thin caller: teardown lives in the payload helper
+# /usr/lib/lustless/lustless-maintainer (PACKAGING-MATRIX §3). prerm runs
+# BEFORE payload files are removed, so the helper is always present here.
+# remove / deconfigure / upgrade all run the full teardown (bounded flush,
+# stop, DNS restore from backup, browser policy removal/restore); the
+# subsequent configure (upgrade) re-applies everything.
 set -e
-
-PREV_DIR=/var/lib/lustless/previous-config
-NM_DISPATCHER=/etc/NetworkManager/dispatcher.d/90-lustless-dns
-RESOLVED_DROPIN=/etc/systemd/resolved.conf.d/lustless.conf
-BROWSER_POLICY_LIST="$PREV_DIR/browser-policies.list"
-
-log() { echo "lustless: $*" >&2; }
-
-# Restore /etc/resolv.conf exactly as found (inverse of postinst's
-# backup_resolv_conf: symlink target, file copy, or absent).
-restore_resolv_conf() {
-    rc=/etc/resolv.conf
-    if [ -f "$PREV_DIR/resolv.conf.link" ]; then
-        target=$(cat "$PREV_DIR/resolv.conf.link")
-        rm -f "$rc"
-        ln -s "$target" "$rc"
-        rm -f "$PREV_DIR/resolv.conf.link"
-    elif [ -f "$PREV_DIR/resolv.conf.file" ]; then
-        rm -f "$rc"
-        cp -p "$PREV_DIR/resolv.conf.file" "$rc"
-        rm -f "$PREV_DIR/resolv.conf.file"
-    else
-        # Install saw no resolv.conf at all — remove the file we wrote.
-        rm -f "$rc"
-    fi
-    rm -f "$PREV_DIR/resolv.conf.absent"
-}
-
-restore_dns() {
-    stack=$(cat "$PREV_DIR/dns-stack" 2>/dev/null || true)
-    case "$stack" in
-        resolved)
-            rm -f "$RESOLVED_DROPIN"
-            if [ -f "$PREV_DIR/resolved-dropin.orig" ]; then
-                mv "$PREV_DIR/resolved-dropin.orig" "$RESOLVED_DROPIN"
-            fi
-            if command -v systemctl >/dev/null 2>&1 \
-                && systemctl is-active --quiet systemd-resolved 2>/dev/null; then
-                systemctl restart systemd-resolved
-                resolvectl flush-caches 2>/dev/null || true
-            fi
-            ;;
-        networkmanager)
-            rm -f "$NM_DISPATCHER"
-            restore_resolv_conf
-            ;;
-        resolvconf-file)
-            restore_resolv_conf
-            ;;
-        ""|*)
-            # Nothing recorded (never configured / already restored).
-            ;;
-    esac
-    rm -f "$PREV_DIR/dns-stack"
-}
-
-remove_browser_policies() {
-    if [ ! -f "$BROWSER_POLICY_LIST" ]; then
-        return 0
-    fi
-    while IFS='|' read -r mode dst backup; do
-        [ -n "$mode" ] || continue
-        case "$mode" in
-            installed)
-                rm -f "$dst"
-                ;;
-            replaced|merged)
-                if [ -n "$backup" ] && [ -f "$backup" ]; then
-                    cp -p "$backup" "$dst"
-                    rm -f "$backup"
-                else
-                    rm -f "$dst"
-                fi
-                ;;
-        esac
-    done < "$BROWSER_POLICY_LIST"
-    rm -f "$BROWSER_POLICY_LIST"
-}
 
 case "${1:-}" in
     remove|deconfigure|upgrade)
-        # 1. Bounded flush of pending uploads (CE pre-uninstall hygiene,
-        # CONTRACTS §11): ask the daemon to drain the outbox, 10 s max;
-        # absence or timeout must never block the uninstall.
-        if [ -x /usr/bin/lustlessctl ] && command -v timeout >/dev/null 2>&1; then
-            timeout 10 /usr/bin/lustlessctl flush >/dev/null 2>&1 \
-                || log "flush skipped or timed out (continuing uninstall)"
+        if [ -x /usr/lib/lustless/lustless-maintainer ]; then
+            /usr/lib/lustless/lustless-maintainer remove
         fi
-
-        # 2. Stop the system unit. The user unit (lustless-agent) is scoped
-        # to each graphical session and exits on its own; it is not
-        # reachable from a maintainer script.
-        if command -v deb-systemd-invoke >/dev/null 2>&1; then
-            deb-systemd-invoke stop lustlessd.service >/dev/null 2>&1 || true
-        elif command -v systemctl >/dev/null 2>&1; then
-            systemctl stop lustlessd.service >/dev/null 2>&1 || true
-        fi
-
-        # 3. Reverse the DNS redirect exactly (§11).
-        restore_dns
-
-        # 4. Remove only what we installed (or restore what we touched).
-        remove_browser_policies
         ;;
     failed-upgrade)
         exit 0
         ;;
     *)
-        log "prerm called with unknown argument '${1:-}'" >&2
+        echo "prerm called with unknown argument '${1:-}'" >&2
         exit 1
         ;;
 esac

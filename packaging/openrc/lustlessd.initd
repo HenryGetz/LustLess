@@ -1,0 +1,37 @@
+#!/sbin/openrc-run
+
+# LustLess system daemon — OpenRC service (Alpine; PACKAGING-MATRIX §1/§3).
+# Equivalent of packaging/systemd/lustlessd.service: foreground daemon
+# (Type=simple) run as root, bounded crash restarts, /var/lib/lustless
+# state, DNS listener on 127.0.0.2:53.
+#
+# Deliberately not sandboxed like the systemd unit — OpenRC has no
+# equivalent directive set; do NOT add ProtectSystem-style hardening here,
+# it does not exist in this form.
+
+name="lustlessd"
+description="LustLess accountability daemon (screen accountability + DNS filtering)"
+
+command="/usr/bin/lustlessd"
+command_user="root:root"
+command_background="yes"
+directory="/var/lib/lustless"
+output_log="/var/log/lustless/lustlessd.log"
+error_log="/var/log/lustless/lustlessd.log"
+
+# CE's 3-restarts-in-10s crash budget (CONTRACTS §11): supervise-daemon
+# restarts on failure after 1s; OpenRC's start-stop-daemon has no burst
+# counter, the daemon's own exit discipline is the primary guard.
+respawn_delay=1
+respawn_max=10
+
+depend() {
+    need net
+    after firewall
+    want logger
+}
+
+start_pre() {
+    checkpath -d -m 0700 -o root:root /var/lib/lustless
+    checkpath -d -m 0755 -o root:root /var/log/lustless
+}

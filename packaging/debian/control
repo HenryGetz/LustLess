@@ -5,7 +5,7 @@ Priority: optional
 Architecture: amd64
 Icon: /usr/share/pixmaps/lustless.png
 Maintainer: LustLess Maintainers <maintainers@lustless.invalid>
-Depends: libssl3, libgtk-3-0, libayatana-appindicator3-1, systemd, policykit-1, dbus, ca-certificates
+Depends: libssl3, libgtk-3-0, libayatana-appindicator3-1, systemd, polkitd, dbus, ca-certificates
 Recommends: xfce4-indicator-plugin
 Suggests: gnome-shell-extension-appindicator
 Description: Accountability client: screen accountability + DNS filtering (Linux edition)

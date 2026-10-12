@@ -135,3 +135,139 @@ services:
     restart: unless-stopped
     # Give the VM time to receive the ACPI shutdown signal before it is killed.
     stop_grace_period: 2m
+
+  # Multi-distro matrix VMs (docs/impl/PACKAGING-MATRIX.md §1 rows 4–9).
+  # Same conventions as zorin-vm: one profile per flavor, ISO bind not :ro,
+  # 4G/4 cores, noVNC on the service's host port.
+
+  debian-vm:
+    image: qemux/qemu
+    container_name: debian-os
+    profiles: ["debian"]
+    environment:
+      RAM_SIZE: "4G"
+      CPU_CORES: "4"
+      DISK_SIZE: "32G"
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8011:8006" # Web-based VNC/noVNC viewer (host port 8011)
+    volumes:
+      - ../../target/testbed/debian_storage:/storage
+      # Must NOT be :ro (usb-storage removable=on — see zorin-vm above).
+      - ../../target/testbed/iso/debian-live-13.7.0-amd64-gnome.iso:/boot.iso
+    restart: unless-stopped
+    stop_grace_period: 2m
+
+  mint-vm:
+    image: qemux/qemu
+    container_name: mint-os
+    profiles: ["mint"]
+    environment:
+      RAM_SIZE: "4G"
+      CPU_CORES: "4"
+      DISK_SIZE: "32G"
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8012:8006" # Web-based VNC/noVNC viewer (host port 8012)
+    volumes:
+      - ../../target/testbed/mint_storage:/storage
+      # Must NOT be :ro (usb-storage removable=on — see zorin-vm above).
+      - ../../target/testbed/iso/linuxmint-22.3-cinnamon-64bit.iso:/boot.iso
+    restart: unless-stopped
+    stop_grace_period: 2m
+
+  fedora-vm:
+    image: qemux/qemu
+    container_name: fedora-os
+    profiles: ["fedora"]
+    environment:
+      RAM_SIZE: "4G"
+      CPU_CORES: "4"
+      DISK_SIZE: "32G"
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8013:8006" # Web-based VNC/noVNC viewer (host port 8013)
+    volumes:
+      - ../../target/testbed/fedora_storage:/storage
+      # Must NOT be :ro (usb-storage removable=on — see zorin-vm above).
+      - ../../target/testbed/iso/Fedora-Workstation-Live-44-1.7.x86_64.iso:/boot.iso
+    restart: unless-stopped
+    stop_grace_period: 2m
+
+  arch-vm:
+    image: qemux/qemu
+    container_name: arch-os
+    profiles: ["arch"]
+    environment:
+      RAM_SIZE: "4G"
+      CPU_CORES: "4"
+      DISK_SIZE: "32G"
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8014:8006" # Web-based VNC/noVNC viewer (host port 8014)
+    volumes:
+      - ../../target/testbed/arch_storage:/storage
+      # Must NOT be :ro (usb-storage removable=on — see zorin-vm above).
+      - ../../target/testbed/iso/archlinux-2026.10.01-x86_64.iso:/boot.iso
+    restart: unless-stopped
+    stop_grace_period: 2m
+
+  alpine-vm:
+    image: qemux/qemu
+    container_name: alpine-os
+    profiles: ["alpine"]
+    environment:
+      RAM_SIZE: "4G"
+      CPU_CORES: "4"
+      DISK_SIZE: "32G"
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8015:8006" # Web-based VNC/noVNC viewer (host port 8015)
+    volumes:
+      - ../../target/testbed/alpine_storage:/storage
+      # Must NOT be :ro (usb-storage removable=on — see zorin-vm above).
+      - ../../target/testbed/iso/alpine-extended-3.24.2-x86_64.iso:/boot.iso
+    restart: unless-stopped
+    stop_grace_period: 2m
+
+  bazzite-vm:
+    image: qemux/qemu
+    container_name: bazzite-os
+    profiles: ["bazzite"]
+    environment:
+      RAM_SIZE: "4G"
+      CPU_CORES: "4"
+      DISK_SIZE: "48G" # Fedora Atomic base + rpm-ostree layering needs headroom
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8016:8006" # Web-based VNC/noVNC viewer (host port 8016)
+    volumes:
+      - ../../target/testbed/bazzite_storage:/storage
+      # Must NOT be :ro (usb-storage removable=on — see zorin-vm above).
+      - ../../target/testbed/iso/bazzite-gnome-stable-live-amd64.iso:/boot.iso
+    restart: unless-stopped
+    stop_grace_period: 2m

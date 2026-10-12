@@ -731,7 +731,13 @@ fn shm_fail(step: &str, e: impl std::fmt::Display) -> CaptureError {
 fn set_shm_mode(shmid: libc::c_int, mode: libc::mode_t) {
     let mut ds: libc::shmid_ds = unsafe { std::mem::zeroed() };
     if unsafe { libc::shmctl(shmid, libc::IPC_STAT, &mut ds) } == 0 {
-        ds.shm_perm.mode = (ds.shm_perm.mode & !0o777) | (mode as u16);
+        // `shm_perm.mode` is c_ushort on glibc and c_uint on musl — widen to
+        // u32 for the arithmetic, then narrow back to the field's per-libc
+        // type (PACKAGING-MATRIX §1).
+        let cur = u32::from(ds.shm_perm.mode);
+        if let Ok(mode) = ((cur & !0o777) | u32::from(mode)).try_into() {
+            ds.shm_perm.mode = mode;
+        }
         unsafe {
             libc::shmctl(shmid, libc::IPC_SET, &mut ds);
         }

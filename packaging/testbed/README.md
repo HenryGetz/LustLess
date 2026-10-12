@@ -28,6 +28,19 @@ GitHub repo name, not an image.
 | Xubuntu 24.04.5 LTS | Xfce | `xubuntu-24.04.5-desktop-amd64.iso` | `4ed869ebf2b9f2f6118c1b60b9ed07576e8fe3d5cdfe10aae06869e669878b81` | 8008 | `xubuntu_storage` | `xubuntu` |
 | Ubuntu 24.04.5.1 LTS | GNOME | `ubuntu-24.04.5.1-desktop-amd64.iso` | `4da4a0c9035da8e68a59a838674f403f0a54472c78a83b4fb7f78d03588f85a7` | 8009 | `ubuntu_storage` | `ubuntu` |
 | Lubuntu 24.04.5 LTS | LXQt | `lubuntu-24.04.5-desktop-amd64.iso` | `303a769f681014c801844e33d7918842878067eb644e3c418d699db25f4b4bc6` | 8010 | `lubuntu_storage` | `lubuntu` |
+| Debian 13.7.0 live | GNOME | `debian-live-13.7.0-amd64-gnome.iso` | `e94859a83b305cae5125dc9c6080ced040c59d099ea7381e7f300fd1dba87a17` | 8011 | `debian_storage` | `debian` |
+| Linux Mint 22.3 | Cinnamon | `linuxmint-22.3-cinnamon-64bit.iso` | `a081ab202cfda17f6924128dbd2de8b63518ac0531bcfe3f1a1b88097c459bd4` | 8012 | `mint_storage` | `mint` |
+| Fedora Workstation 44-1.7 live | GNOME | `Fedora-Workstation-Live-44-1.7.x86_64.iso` | `1620295f6a00c27c3208f0c00b8ece4eab1ec69b9002152d97488bf26a426ddf` | 8013 | `fedora_storage` | `fedora` |
+| Arch Linux 2026.10.01 | CLI live | `archlinux-2026.10.01-x86_64.iso` | `684ded26c63240ff4a41e8c25ee84ea6da233f557364821f13d12c2b0a9059a5` | 8014 | `arch_storage` | `arch` |
+| Alpine 3.24.2 extended | CLI live | `alpine-extended-3.24.2-x86_64.iso` | `a22115a46a1bcd876234a6cd43797fe19f4acfc4512fb41ea64e16cc2ffb4d90` | 8015 | `alpine_storage` | `alpine` |
+| Bazzite GNOME stable live | GNOME | `bazzite-gnome-stable-live-amd64.iso` | `8a8a448a922d047dd60f73f03fe7d3a8cd06798859166b3418712029cc32f8a0` | 8016 | `bazzite_storage` | `bazzite` |
+
+All hashes were verified against the publishers' checksum files
+(debian-cd SHA256SUMS, kernel.org linuxmint/fedora/arch mirrors, Alpine CDN
+`.sha256`, `download.bazzite.gg` CHECKSUM). SteamOS has **no public install
+ISO** (Deck recovery images only) — its `pacman`-based install path is
+covered by the Arch VM, its immutable-root path by Bazzite; see
+`packaging/README.md` for the on-device SteamOS procedure.
 
 Every service follows the same pattern: `qemux/qemu`, `RAM_SIZE=4G`,
 `CPU_CORES=4`, `DISK_SIZE=32G`, `/dev/kvm` + `/dev/net/tun`, `NET_ADMIN`,

@@ -1,0 +1,10 @@
+#!/bin/sh
+# apk pre-deinstall: full teardown + finalize while payload files are
+# still present (OpenRC service stopped here — no separate purge concept
+# on apk; the state-keeping deviation still applies).
+HELPER=/usr/lib/lustless/lustless-maintainer
+if [ -x "$HELPER" ]; then
+    "$HELPER" remove || :
+    "$HELPER" purge || :
+fi
+exit 0

@@ -1,0 +1,9 @@
+#!/bin/sh
+# apk post-install: thin calls into the payload helper
+# /usr/lib/lustless/lustless-maintainer (PACKAGING-MATRIX §3).
+HELPER=/usr/lib/lustless/lustless-maintainer
+[ -x "$HELPER" ] || exit 0
+ver=$(apk info --print-version lustless 2>/dev/null || echo unknown)
+"$HELPER" configure "$ver" || :
+echo "lustless: the tray agent starts via XDG autostart on graphical logins"
+echo "lustless: state/config: /etc/lustless/lustless.toml, /var/lib/lustless"

@@ -1,0 +1,37 @@
+# Contributor: LustLess Maintainers <maintainers@lustless.invalid>
+# Alpine package (musl + OpenRC; PACKAGING-MATRIX §1/§8). Consumes the
+# prebuilt musl payload tree at ../../target/pkg-root-apk (packaging/
+# stage.sh + build-apk.sh: systemd units dropped, OpenRC initd added).
+# Built by packaging/build-apk.sh inside an alpine container (abuild
+# refuses to run as root — see that script).
+
+pkgname=lustless
+pkgver=0.1.0
+pkgrel=0
+pkgdesc="Accountability client: screen accountability + DNS filtering (Linux edition)"
+url="https://github.com/HenryGetz/LustLess"
+arch="x86_64"
+license="LicenseRef-Proprietary"
+depends="openrc openssl gtk+3.0 libayatana-appindicator polkit dbus ca-certificates python3"
+install="lustless.post-install lustless.pre-upgrade lustless.post-upgrade lustless.pre-deinstall"
+source=""
+builddir="$srcdir"
+options="!strip !libtool !ldconfig-args !fakeroot"
+
+# /etc files are conffiles by default; listed explicitly for clarity.
+conffiles="/etc/lustless/lustless.toml"
+
+prepare() {
+    # No source to unpack; just make sure srcdir (which builddir aliases)
+    # exists so package() can find $srcdir/stage.
+    mkdir -p "$srcdir"
+}
+
+package() {
+    # abuild (3.17) does not pre-create $pkgdir — mkdir first, then tar
+    # (not cp: the fakeroot syscall shim is flaky in this container kernel,
+    # tar/mkdir survive it). Absolute payload path: abuild recreates
+    # $srcdir (wiping anything staged there before the build).
+    mkdir -p "$pkgdir"
+    tar -C /src/target/pkg-root-apk -cf - . | tar -C "$pkgdir" -xf -
+}

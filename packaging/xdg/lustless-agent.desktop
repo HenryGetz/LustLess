@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=LustLess Agent
+GenericName=Accountability Agent
+Comment=Per-user accountability tray agent for the LustLess daemon
+Exec=/usr/bin/lustless-agent
+Icon=lustless
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-KDE-autostart-after=panel

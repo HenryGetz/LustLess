@@ -1,0 +1,27 @@
+# Maintainer: LustLess Maintainers <maintainers@lustless.invalid>
+# Arch Linux package (also the SteamOS base — PACKAGING-MATRIX §1/§9).
+# Consumes the prebuilt payload tree at ../../target/pkg-root (packaging/
+# stage.sh, hermetic glibc-2.35 build via packaging/build-binaries.sh).
+# Built by packaging/build-arch.sh inside an archlinux container (makepkg
+# refuses to run as root — see that script).
+
+pkgname=lustless
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Accountability client: screen accountability + DNS filtering (Linux edition)"
+arch=('x86_64')
+url="https://github.com/HenryGetz/LustLess"
+license=('Proprietary')
+depends=('openssl' 'gtk3' 'libayatana-appindicator' 'polkit' 'dbus' 'ca-certificates' 'python')
+optdepends=('firefox: DoH lockdown via managed policy'
+            'chromium: DoH lockdown via managed policy')
+options=('!strip' '!libtool' '!emptydirs')
+backup=('etc/lustless/lustless.toml')
+install=lustless.install
+source=()
+noextract=()
+sha256sums=()
+
+package() {
+    cp -a "$srcdir"/stage/. "$pkgdir"/
+}
