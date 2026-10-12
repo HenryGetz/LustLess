@@ -209,7 +209,7 @@ Manifest keys **verbatim** (screenstate schema 3.0.0, `capture-pipeline.md` §2)
   `re/findings/10-classifier/classifier-internals-classifier.md`; LustLess keeps the
   *semantics* — result + control messages — over a debuggable channel.)
 - Scoring model: **Covenant Eyes' production classifier** (upstream authorization —
-  see `AUTHORIZATION.md` at repo root; clean-room requirement waived by CE). The
+  clean-room requirement waived by CE). The
   `b1`/`b2`/`b3` shards are the `ensem_3cls-6.1.2` scoring ensemble
   (`bundle-formats.md` §2), `sw` = Snowball NLP word/feature data for title scoring,
   `mn` = bundle manifest. Ship the original `.dat.enc` artifacts byte-identical and

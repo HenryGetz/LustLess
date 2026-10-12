@@ -105,7 +105,7 @@ command in the README is the fallback.
    `/etc/lustless/lustless.toml` (conffile semantics per format), units or
    OpenRC scripts, pixmap icon. Model bundle staged by
    `crates/lustless-classifier/fetch-model.sh` (offline from `re/samples/`,
-   AUTHORIZATION.md covers the CE materials; private repo).
+   upstream authorization covers the CE materials; private repo).
 
 ## 5. Dependency map (verify exact names against each distro's repos at build time)
 

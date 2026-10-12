@@ -1,8 +1,9 @@
 # CE branding assets (extracted, authorized)
 
-**Authorization:** `AUTHORIZATION.md` at the repo root records written
-authorization from the Covenant Eyes head of software engineering (2026-10-11)
-granting this project use of CE's logos/branding assets in the Linux build.
+**Authorization:** written authorization from the Covenant Eyes head of
+software engineering (2026-10-11) grants this project use of CE's
+logos/branding assets in the Linux build. The record is kept with the
+project records outside the repository.
 These files are CE's production artwork, extracted verbatim from the shipped
 Windows binaries — not redraws.
 

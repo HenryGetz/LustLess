@@ -10,7 +10,7 @@ Model card for the `lustless-classifier` scorer bundle (CONTRACTS §7
 | model | **Covenant Eyes' production numeric feature-scoring ensemble**, `ensem_3cls-6.1.2`, as shipped in Covenant Eyes Victory Shield 10.1.44 |
 | architecture | three parallel evaluator shards (`b1`/`b2`/`b3`), each a compact convolutional graph (`Conv`/`Clip`/`Add`/`GlobalAveragePool`/`Flatten`/`Gemm`/`Softmax`) with a 3-value softmax output, folded by a median/minimum threshold stage and a 15-row category table into one linear score; plus a word-feature RBF model (`sw`) that contributes a window-title class to the same table |
 | provenance | the CE 10.1.44 shipped bundle, staged byte-identical by `fetch-model.sh` from `re/samples/data/enc/` (CE CDN fallback) |
-| authorization | **`AUTHORIZATION.md` at the repository root** — upstream (Covenant Eyes) written authorization covers use of these artifacts in this build; the clean-room requirement is waived for the classifier model and bundle data |
+| authorization | upstream (Covenant Eyes) written authorization covers use of these artifacts in this build; the clean-room requirement is waived for the classifier model and bundle data |
 | shipped artifacts | three `scorer` shards (2,323,104 B each, encrypted), one `labels` word model (901,200 B, encrypted), one `mn` CE bundle manifest (1,248 B, encrypted), one generated `calibration` JSON (plaintext) |
 
 Why: first-party-quality parity with the CE Windows product — same numeric

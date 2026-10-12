@@ -4,7 +4,7 @@
 # + content-addressed `<sha512>-<role>.<ext>` artifacts).
 #
 # Source:   the pulled CE samples in re/samples/data/enc/ (byte-identical
-#           production artifacts; use authorized per AUTHORIZATION.md).
+#           production artifacts; use authorized for this build).
 # Verify:   every artifact is pinned below by its full SHA-512 (which also
 #           matches CE's own content-id scheme: filename prefix = first 80
 #           bits of the SHA-512, bundle-formats.md §2.1).
@@ -136,7 +136,7 @@ MODEL_INFO_JSON="$(cat <<EOF
 {
   "name": "${MODEL_ID}",
   "revision": "${BUNDLE_VERSION}",
-  "license": "Covenant Eyes production classifier, used under the authorization in AUTHORIZATION.md",
+  "license": "Covenant Eyes production classifier, used under upstream authorization for this build",
   "source": "Covenant Eyes Victory Shield 10.1.44 shipped bundle (re/samples/data/enc)"
 }
 EOF

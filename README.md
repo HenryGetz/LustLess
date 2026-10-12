@@ -1,110 +1,69 @@
 # LustLess
 
-On-device accountability for Linux: screen accountability (capture + a local
-classifier — **no screenshot, crop, title or score ever leaves the device**),
-system-wide DNS-level web filtering, a token-authenticated local dashboard,
-and a polkit-gated, journaudited administrative escape hatch. A Linux
-reimplementation of the Covenant Eyes "Victory Shield" 10.1.44 behavior
-surface (`re/` holds the reverse-engineering record; `docs/impl/CONTRACTS.md`
-holds the ratified contracts).
+Covenant Eyes for Linux? Doesn't exist. Never has. Probably never will.
 
-Ships as native packages for every major distro family — **one glibc 2.35
-build feeds Debian/Ubuntu/Zorin/Mint, Fedora, Arch and SteamOS; Alpine gets a
-musl build** — all assembled from a single staging tree and sharing one
-lifecycle helper, so install, upgrade and removal behave identically
-everywhere.
+So we made one.
+
+Cue 200 pages of reverse engineering, a Rust workspace, and seven distros
+of very specific suffering. What you get:
+
+- **Your screen gets watched.** A classifier judges it *on your machine*.
+  No screenshot, crop, title or score leaves the device. That's not a
+  privacy setting. That's just how it's built. cope.
+- **The web gets filtered.** DNS-level, system-wide, before your browser
+  gets any ideas. Signed out? Everything fails closed. That's not a bug,
+  that's the product.
+- **A dashboard** at `http://127.0.0.1:8760` so you can watch it work.
+- **You can't turn it off.** Ask politely via polkit, give a reason, enjoy
+  your permanent journal receipt. Nice try though.
+
+`lustlessctl status` · `lustlessctl policy` · `lustlessctl break-glass <reason>`
 
 ## Install
 
-Grab the package for your distro from the
-[latest release](https://github.com/HenryGetz/LustLess/releases/latest):
+You have a distro. We have a package. Match them:
 
-| Your distro | Package | Install |
+| Distro | File | Command |
 |---|---|---|
-| **Debian 13, Ubuntu 22.04+, Zorin OS 17, Linux Mint** | `lustless_0.1.0_amd64.deb` | `sudo apt install ./lustless_0.1.0_amd64.deb` |
-| **Fedora Workstation** | `lustless-0.1.0-1.x86_64.rpm` | `sudo dnf install ./lustless-0.1.0-1.x86_64.rpm` |
-| **Bazzite, Silverblue & other immutable Fedora** | `lustless-0.1.0-1.x86_64.rpm` | `sudo rpm-ostree install ./lustless-0.1.0-1.x86_64.rpm` then **reboot** |
-| **Arch Linux, EndeavourOS, SteamOS** | `lustless-0.1.0-1-x86_64.pkg.tar.zst` | `sudo pacman -U ./lustless-0.1.0-1-x86_64.pkg.tar.zst` |
-| **Alpine Linux** | `lustless-0.1.0-r0.apk` | `sudo cp lustless.rsa.pub /etc/apk/keys/` then `sudo apk add --allow-untrusted ./lustless-0.1.0-r0.apk` |
-| **SteamOS (read-only root)** | `lustless-0.1.0-1-x86_64.pkg.tar.zst` | `steamos-readonly disable && sudo pacman -U ./lustless-…pkg.tar.zst && steamos-readonly enable` |
+| Debian / Ubuntu / Zorin / Mint | `lustless_0.1.0_amd64.deb` | `sudo apt install ./lustless_0.1.0_amd64.deb` |
+| Fedora | `lustless-0.1.0-1.x86_64.rpm` | `sudo dnf install ./lustless-0.1.0-1.x86_64.rpm` |
+| Bazzite / immutable Fedora | `lustless-0.1.0-1.x86_64.rpm` | `sudo rpm-ostree install ./lustless-0.1.0-1.x86_64.rpm` && reboot |
+| Arch / EndeavourOS | `lustless-0.1.0-1-x86_64.pkg.tar.zst` | `sudo pacman -U ./lustless-0.1.0-1-x86_64.pkg.tar.zst` |
+| Alpine | `lustless-0.1.0-r0.apk` | `sudo cp lustless.rsa.pub /etc/apk/keys/ && sudo apk add --allow-untrusted ./lustless-0.1.0-r0.apk` |
+| SteamOS | `lustless-0.1.0-1-x86_64.pkg.tar.zst` | `steamos-readonly disable && sudo pacman -U ./lustless-0.1.0-1-x86_64.pkg.tar.zst && steamos-readonly enable` |
 
-Don't want to pick? From a checkout, the universal installer detects your
-family and does it:
+All of it: [latest release](https://github.com/HenryGetz/LustLess/releases/latest).
 
-```sh
-scripts/install.sh ./lustless_0.1.0_amd64.deb   # any local package file
-LUSTLESS_RELEASE_URL=<release-url> scripts/install.sh   # download + install
-```
+Can't be bothered to choose? `scripts/install.sh` figures it out for you.
 
-**After install**, each graphical user enables the tray agent once:
+After install, per user: `systemctl --user enable --now lustless-agent.service`
+(Alpine does this itself; LXQt has no tray host and degrades gracefully —
+notifications + `lustlessctl status` + the dashboard.)
 
-```sh
-systemctl --user enable --now lustless-agent.service
-```
+Uninstall reverses everything — your DNS, browser policies and polkit state
+come back exactly as found. `sudo apt purge lustless` (or the dnf/rpm/pacman/
+apk equivalent). It's politer than you are.
 
-(On Alpine it starts automatically via XDG autostart; on LXQt there is no SNI
-tray host, so the agent degrades to desktop notifications + `lustlessctl
-status` + the dashboard — accountability is unaffected.)
+## Does it actually work
 
-**Uninstall** reverses everything — DNS configuration, browser policies and
-the polkit action are restored byte-for-byte:
-
-```sh
-sudo apt purge lustless        # or: dnf remove / rpm -e / pacman -R / apk del
-```
-
-## What you get
-
-- **`lustlessd`** (system daemon): DNS forwarder on `127.0.0.2:53`, capture
-  scheduler, classifier supervisor, dashboard on `http://127.0.0.1:8760`
-  (token-authenticated).
-- **`lustless-classifier`**: local scoring process; all model artifacts stay
-  on disk, nothing is uploaded.
-- **`lustless-agent`** (GTK tray): per-user session presence + notifications.
-- **`lustlessctl`**: `status`, `policy`, `dns-activity`, `flush`, and the
-  audited `break-glass` override (polkit `auth_admin_keep`, every use logged
-  to journald).
-
-Policy levels: *Standard Blocking*, *Strong Blocking*, *Blocking Enabled*
-(`lustlessctl policy`). While **signed out, web DNS fails closed** — that is
-the product semantic, not a fault.
-
-## Verified
-
-Every package above was installed and exercised in a **live VM running that
-distro's own ISO** (QEMU testbed, `packaging/testbed/`): Fedora 44, Ubuntu
-24.04 LTS, Debian 13, Linux Mint 22.3, Arch Linux, Alpine 3.24, and Bazzite
-(immutable). Full evidence, per-distro results and caveats:
-[`docs/impl/TEST-MATRIX.md`](docs/impl/TEST-MATRIX.md). The packaging
-contract (distro matrix, dependency map, acceptance checklist) is
-[`docs/impl/PACKAGING-MATRIX.md`](docs/impl/PACKAGING-MATRIX.md); per-flavor
-details and the browser-policy caveats are in
-[`packaging/README.md`](packaging/README.md).
+We installed it in real VMs on seven distros and watched it block things:
+Fedora 44, Ubuntu 24.04 LTS, Debian 13, Linux Mint 22.3, Arch, Alpine,
+Bazzite. The receipts: [`docs/impl/TEST-MATRIX.md`](docs/impl/TEST-MATRIX.md).
+The rules it follows: [`docs/impl/PACKAGING-MATRIX.md`](docs/impl/PACKAGING-MATRIX.md).
+The per-flavor fine print: [`packaging/README.md`](packaging/README.md).
 
 ## Building
 
-All builds are hermetic (Docker) — the host glibc never leaks in:
-
 ```sh
-packaging/build-deb.sh      # .deb   (ubuntu:22.04 container, glibc 2.35)
-packaging/build-rpm.sh      # .rpm   (fedora container)
-packaging/build-arch.sh     # .pkg.tar.zst (archlinux container)
-packaging/build-apk.sh      # .apk   (alpine container, musl + OpenRC)
+packaging/build-deb.sh   # or build-rpm.sh / build-arch.sh / build-apk.sh
 ```
 
-All four consume one staging tree (`packaging/stage.sh`) and one lifecycle
-helper (`packaging/maintainer/lustless-maintainer`). Dev workflow:
-`cargo build --release`, `scripts/smoke-local.sh`, tests per crate.
+All hermetic in Docker. Your host glibc stays home where it belongs.
 
-## Testbed
+## Deeper
 
-`packaging/testbed/` boots eleven distro VMs (`qemux/qemu`, noVNC per flavor)
-and carries the acceptance harness (`serve.sh`, `vm/vm-install.sh`,
-`vm/vm-verify.sh`). See that README for the flavor matrix and ISO checksums.
+`docs/impl/CONTRACTS.md` (the ratified contracts) · `re/` (how we learned
+all this) · `packaging/testbed/` (the eleven-VM torture chamber) ·
+`scripts/smoke-local.sh`
 
-## Status & records
-
-Experimental — APIs may change. CE classifier-model bundles and branding are
-used under written authorization; see
-[`AUTHORIZATION.md`](AUTHORIZATION.md) (the authorization record MUST be
-completed before any public release of a build containing CE materials).
+Experimental. Things may change. Your screen still never leaves your machine.
