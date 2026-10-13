@@ -481,7 +481,9 @@ fn layout(title: &str, snapshot: &PolicySnapshot, body: &str) -> String {
     format!(
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>LustLess — {title}</title><style>{STYLE}</style></head>\
+         <title>LustLess — {title}</title>\
+         <link rel=\"icon\" type=\"image/png\" href=\"{logo}\">\
+         <style>{STYLE}</style></head>\
          <body><header><img class=\"logo\" src=\"{logo}\" alt=\"LustLess\">\
          <a href=\"/\">Status</a><a href=\"/sign-in\">Sign in</a>\
          <a href=\"/settings\">Settings</a><a href=\"/activity\">DNS activity</a>\

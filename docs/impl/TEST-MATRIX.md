@@ -66,21 +66,36 @@ passed `--no-install-recommends`, which suppressed the Xfce SNI host — on a
 Zorin Lite / Xubuntu desktop the agent then ran headless with no visible
 sign-in path.
 
-## Install/upgrade path (v0.1.2)
+## Install/upgrade path (v0.1.2+)
 
 Container runs (ubuntu:24.04, plain `bash`, no GitHub credentials — the
 release and the script are fetched over the public URLs a user copies):
 
 | Scenario | Result |
 |---|---|
-| fresh system, one-liner | `install.sh` fetched, `lustless_0.1.2_amd64.deb` downloaded from `releases/download/v0.1.2`, apt installs it (no `_apt` sandbox warning), `/usr/share/applications/lustless-agent.desktop` present, `lustlessctl --version` → `0.1.2` |
-| existing 0.1.0 install, same one-liner | `1 upgraded`, `Unpacking lustless (0.1.2) over (0.1.0)`, `Setting up lustless (0.1.2)`, resulting `dpkg` version `0.1.2` |
+| fresh system, one-liner | `install.sh` fetched, `lustless_0.1.4_amd64.deb` downloaded from `releases/download/v0.1.4`, apt installs it (no `_apt` sandbox warning), `/usr/share/applications/lustless-agent.desktop` present, `lustlessctl --version` → `0.1.4` |
+| existing 0.1.0 install, same one-liner | `1 upgraded`, `Unpacking lustless (0.1.2) over (0.1.0)`, `Setting up lustless (0.1.2)`, resulting `dpkg` version `0.1.4` |
 | alpine:3.24, `wget -qO- … \| sh` | apk installed with 127 deps, launcher present |
+| icons | `hicolor/{16x16,24x24,32x32,48x48,256x256}/apps/lustless.png` present in all four formats (deb 5 entries, rpm 5 files, zst/apk staged tree) |
+| **sign-in window** (v0.1.4) | plain `/usr/bin/lustless-agent` start under Xvfb + `dbus-run-session` maps a window titled `Sign in to LustLess` (`xdotool search --name`), i.e. install → launch → GUI login with no tray and no flags |
 
 Installing redirects `/etc/resolv.conf` to the 127.0.0.2 forwarder, so a
 machine whose `lustlessd` is stopped has no DNS until the daemon is back —
 expected fail-closed behavior, and why a container-based re-install needs
 its original resolver restored first.
+
+### Agent main loop (v0.1.4)
+
+`v0.1.3` shipped an agent whose GTK main loop returned immediately: `gio`'s
+`hold()` guard was dropped as a temporary, and the windowless
+`GtkApplication` therefore exited right after activation. Symptom: the agent
+process looked alive (worker thread) but no timer, tray-menu click or dialog
+ever dispatched — including the sign-in window that release advertised.
+Evidence used while diagnosing, on the host and in containers: a windowless
+`gtk::Application` probe (with/without hold, with/without an application id)
+returns from `run()` in ~0.1 s, and `gio-0.18`'s
+`ApplicationHoldGuard` is `#[must_use]` with `Drop → g_application_release`.
+The guard now lives in the agent's context (`Ctx::_hold`).
 
 ## How to reproduce a run
 

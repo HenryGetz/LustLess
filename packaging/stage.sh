@@ -113,4 +113,14 @@ install -D -m 0644 "$repo_root/packaging/etc/lustless.toml" \
 install -D -m 0644 "$repo_root/packaging/assets/lustless-256.png" \
     "$dest/usr/share/pixmaps/lustless.png"
 
+# The CE shield at every size the desktop asks for (menus 16/24, panels and
+# window decorations 32/48, launchers and About dialogs 256) so the icon in
+# the application menu, the taskbar and the sign-in window is the same mark
+# the original Windows client ships — not a scaled-up 256 or a generic
+# fallback. `Icon=lustless` in the .desktop files resolves here first.
+for size in 16 24 32 48 256; do
+    install -D -m 0644 "$repo_root/packaging/assets/lustless-$size.png" \
+        "$dest/usr/share/icons/hicolor/${size}x${size}/apps/lustless.png"
+done
+
 echo "stage.sh: staged payload at $dest"

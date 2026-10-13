@@ -3,11 +3,11 @@
 # matching package (PACKAGING-MATRIX §2). POSIX sh, pipe-safe:
 #
 #   curl -fsSL <raw-url>/scripts/install.sh | sudo bash      # download + install
-#   sh install.sh ./lustless_0.1.2_amd64.deb                 # install a local file
+#   sh install.sh ./lustless_0.1.4_amd64.deb                 # install a local file
 #
 # Env:
 #   LUSTLESS_RELEASE_URL   base URL of the release assets
-#                          (default: the project's GitHub v0.1.2 release)
+#                          (default: the project's GitHub v0.1.4 release)
 #
 # Families: apk (Alpine), pacman (Arch/SteamOS), rpm-ostree (Bazzite — a
 # reboot is required after layering), dnf/rpm (Fedora), apt (Debian/Ubuntu/
@@ -17,8 +17,8 @@
 set -eu
 set -o pipefail 2>/dev/null || true
 
-VERSION="0.1.2"
-DEFAULT_BASE="https://github.com/HenryGetz/LustLess/releases/download/v0.1.2"
+VERSION="0.1.4"
+DEFAULT_BASE="https://github.com/HenryGetz/LustLess/releases/download/v0.1.4"
 BASE="${LUSTLESS_RELEASE_URL:-$DEFAULT_BASE}"
 
 die() { echo "install.sh: $*" >&2; exit 1; }
@@ -87,9 +87,12 @@ case "$family" in
         as_root apk add --allow-untrusted "$pkg" ;;
 esac
 
-# Bring up the per-user tray agent for the invoking user right now instead of
+# Bring up the per-user agent for the invoking user right now instead of
 # waiting for their next login: the XDG autostart entry only runs at session
 # start, so without this the agent looks "not installed" until a re-login.
+# Starting the agent is also what opens the sign-in window — a signed-out
+# agent presents it two seconds after startup, so a fresh machine goes
+# install → window → sign in with no tray or menu hunting.
 start_user_agent() {
     [ "$(id -u)" -eq 0 ] || return 0
     [ -n "${SUDO_USER:-}" ] || return 0
@@ -99,19 +102,38 @@ start_user_agent() {
     runtime="${XDG_RUNTIME_DIR:-/run/user/$uid}"
     [ -d "$runtime" ] || return 0
     command -v systemctl >/dev/null 2>&1 || return 0
-    echo "install.sh: starting the LustLess tray agent for $user"
-    sudo -u "$user" env XDG_RUNTIME_DIR="$runtime" DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
-        systemctl --user daemon-reload >/dev/null 2>&1 || true
-    sudo -u "$user" env XDG_RUNTIME_DIR="$runtime" DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
-        systemctl --user enable --now lustless-agent.service >/dev/null 2>&1 \
-        || echo "install.sh: enable lustless-agent.service for $user after login (systemctl --user enable --now lustless-agent.service)"
+
+    user_systemctl() {
+        sudo -H -u "$user" env XDG_RUNTIME_DIR="$runtime" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
+            systemctl --user "$@"
+    }
+
+    echo "install.sh: starting the LustLess agent for $user"
+    user_systemctl daemon-reload >/dev/null 2>&1 || true
+    if user_systemctl enable --now lustless-agent.service >/dev/null 2>&1; then
+        echo "install.sh: the sign-in window is opening in your session"
+    else
+        # No usable user manager (unusual): fall back to launching the window
+        # directly when this shell still knows the display (sudo keeps
+        # DISPLAY/WAYLAND_DISPLAY on most desktops).
+        if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+            sudo -H -u "$user" env XDG_RUNTIME_DIR="$runtime" \
+                DISPLAY="${DISPLAY:-}" WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+                XAUTHORITY="${XAUTHORITY:-}" HOME="${HOME:-}" \
+                setsid --fork /usr/bin/lustless-agent --show >/dev/null 2>&1 &
+        fi
+        echo "install.sh: sign in from the application menu entry \"LustLess\", or run:"
+        echo "            lustless-agent --show"
+    fi
 }
 start_user_agent
 
 echo
 echo "install.sh: done. Check with:  lustlessctl status"
-echo "install.sh: sign in from the application menu entry \"LustLess\", or"
-echo "            headless with:  lustlessctl signin <username>"
+echo "install.sh: sign in in the LustLess window (application menu entry"
+echo "            \"LustLess\" opens it again), or headless with:"
+echo "            lustlessctl signin <username>"
 echo "install.sh: DNS filtering is active system-wide after install; the tray"
 echo "            agent runs in your session (application menu / tray icon)."
 echo "            See /etc/lustless/lustless.toml for configuration."

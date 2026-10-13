@@ -262,8 +262,12 @@ capture_upstream_resolvers() {
     fi
     upstreams=$(printf '%s' "$upstreams" | sed 's/ *$//')
     if [ -n "$upstreams" ]; then
-        list=$(printf '%s' "$upstreams" \
-            | sed 's/^/"/; s/ /", "/g; s/ *$//; s/"$/"/')
+        # `A B` → `"A", "B"` — the closing quote is appended after the last
+        # element. (The previous form opened quotes around the first element
+        # and closed around the last *space*, so a two-resolver list came out
+        # as `["A", "B]`: invalid TOML, which made the daemon discard the
+        # whole configuration and fall back to defaults.)
+        list=$(printf '%s' "$upstreams" | sed 's/^/"/; s/ /", "/g; s/$/"/')
         sed -i "s|^user_resolvers = .*|user_resolvers = [$list]|" "$cfg"
     fi
 }

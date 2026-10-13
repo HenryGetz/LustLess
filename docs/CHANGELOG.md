@@ -1,5 +1,52 @@
 # Changelog
 
+## v0.1.4 — the agent's main loop actually runs
+
+**v0.1.3 shipped a broken agent: its GTK main loop returned the moment it
+started.** Everything that needs the loop was dead — the tray menu items
+(including “Sign in…”), the status/notification updates, and the automatic
+sign-in window v0.1.3 promised. The process only stayed alive on its worker
+thread, so it looked installed but did nothing. Fixed:
+
+- **`gio`'s hold guard was dropped immediately.** `app.hold()` returns an
+  RAII guard (`#[must_use]`) that releases the application on drop; called as
+  a bare statement it was released a line later, and a windowless
+  `GtkApplication` whose use count hits zero returns from `run()` right after
+  activation. The guard now lives in the agent's context for the process
+  lifetime.
+- **argv handling**: the program name is kept in the argument list passed to
+  `run_with_args` (an empty slice leaves GApplication with argc 0, which also
+  returns immediately), with the agent's own `--show`/`--signin` flags
+  filtered out first.
+- The sign-in dialog's default button pointed at a temporary `gtk::Button`
+  that was dropped immediately (GTK critical, no default response); it now
+  uses `set_default_response(ResponseType::Ok)`.
+- `lustless-maintainer` wrote `user_resolvers = ["a", "b]` — the closing quote
+  was appended after the last *space* instead of the last element, so the
+  daemon discarded the **whole** configuration file and silently fell back to
+  defaults. The list is now quoted per element.
+- Package/CLI version `0.1.4`; installer release-pinned to `v0.1.4`.
+
+Verified on a clean container: fresh install via the public one-liner, then a
+plain agent start maps a window titled “Sign in to LustLess”.
+
+## v0.1.3 — install → sign-in window, original icons everywhere
+
+- **The installer ends on the login window.** A signed-out agent presents the
+  sign-in dialog two seconds after it starts, and the installer starts that
+  agent — so on a fresh machine `curl … | sudo bash` goes install → window →
+  sign in with no tray, no menu hunting. Same at every graphical login while
+  signed out (the autostart entry starts the same agent).
+- `lustless-agent --show` (menu entry, re-activation of a running agent)
+  presents the window on demand; an in-flight guard stops two dialogs
+  stacking while still letting a later click reopen it.
+- **Icons match the original client**: the CE shield is installed at every
+  size the desktop asks for (`hicolor` 16/24/32/48/256, plus the existing
+  pixmap) instead of a scaled 256, the sign-in window now carries the shield
+  as its window icon, and the dashboard has a favicon (same mark). The tray
+  icon was already the real 32 px mark.
+- Package/CLI version `0.1.3`; the installer is release-pinned to `v0.1.3`.
+
 ## v0.1.2 — sign-in surface, one-liner installer, honest version numbers
 
 ### Install

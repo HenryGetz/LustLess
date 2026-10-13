@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build lustless-0.1.2-1-x86_64.pkg.tar.zst (Arch Linux, SteamOS base;
+# Build lustless-0.1.4-1-x86_64.pkg.tar.zst (Arch Linux, SteamOS base;
 # PACKAGING-MATRIX §2/§9).
 #
 #   packaging/build-arch.sh               full build: compile against the
@@ -9,10 +9,10 @@
 #   packaging/build-arch.sh --skip-build  reuse binaries already in
 #                                        target/release/
 #
-# Output: ./lustless-0.1.2-1-x86_64.pkg.tar.zst
+# Output: ./lustless-0.1.4-1-x86_64.pkg.tar.zst
 set -euo pipefail
 
-VERSION="0.1.2"
+VERSION="0.1.4"
 PKGREL="1"
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"

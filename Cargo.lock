@@ -1671,7 +1671,7 @@ checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
 name = "lustless-agent"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "gtk",
  "libappindicator",
@@ -1685,7 +1685,7 @@ dependencies = [
 
 [[package]]
 name = "lustless-capture"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "ashpd",
  "chrono",
@@ -1708,7 +1708,7 @@ dependencies = [
 
 [[package]]
 name = "lustless-classifier"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "aes",
  "cbc",
@@ -1728,7 +1728,7 @@ dependencies = [
 
 [[package]]
 name = "lustless-core"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "rand 0.8.8",
  "rusqlite",
@@ -1742,7 +1742,7 @@ dependencies = [
 
 [[package]]
 name = "lustless-dns"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "hickory-proto",
  "libc",
@@ -1756,7 +1756,7 @@ dependencies = [
 
 [[package]]
 name = "lustless-net"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -1774,7 +1774,7 @@ dependencies = [
 
 [[package]]
 name = "lustlessctl"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "lustless-core",
  "nix",
@@ -1785,7 +1785,7 @@ dependencies = [
 
 [[package]]
 name = "lustlessd"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "flate2",
  "futures",

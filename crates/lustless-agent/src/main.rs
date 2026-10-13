@@ -53,7 +53,9 @@ fn main() -> ExitCode {
     // consumed here so GApplication never sees them; a second launch of the
     // same command line reaches the running primary instance as a remote
     // activation and presents the same surface (§13).
-    let show = std::env::args().any(|arg| arg == "--show" || arg == "--signin");
+    let mut args: Vec<String> = std::env::args().collect();
+    let show = args.iter().any(|arg| arg == "--show" || arg == "--signin");
+    args.retain(|arg| arg != "--show" && arg != "--signin");
 
     let app = gtk::Application::builder().application_id(APP_ID).build();
     let activated = Rc::new(std::cell::Cell::new(false));
@@ -71,20 +73,41 @@ fn main() -> ExitCode {
         }
         activated.set(true);
         let ctx = activate(app, &config);
+        // `activate` stores gio's hold guard in `Ctx` — a windowless
+        // GtkApplication otherwise returns from `run()` right here, before
+        // any timer, menu click or dialog can ever be dispatched.
         if show {
             present(&ctx);
+        } else {
+            // Started by the installer or the autostart entry: prompt for
+            // sign-in once the first snapshot has had a moment to arrive.
+            schedule_sign_in_prompt(&ctx);
         }
         *activate_ctx.borrow_mut() = Some(ctx);
     });
-    app.run_with_args::<&str>(&[])
+    // The program name MUST stay in the argument list: passing an empty
+    // slice leaves GApplication with argc 0, whose main loop returns
+    // immediately — the agent then only survives on its worker thread and
+    // never dispatches a timer, a menu click or a dialog.
+    app.run_with_args(&args)
 }
 
 /// Shared main-thread context for menu actions.
 struct Ctx {
     app: gtk::Application,
+    /// Keeps the application held for the process lifetime. gio's `hold()`
+    /// returns an RAII guard that *releases on drop* (`#[must_use]`), and a
+    /// windowless `GtkApplication` whose use count reaches zero returns from
+    /// `run()` immediately — which is exactly what this agent is. Dropping
+    /// this guard silently kills the main loop: no timers, no tray menu
+    /// clicks, no dialogs.
+    _hold: gtk::gio::ApplicationHoldGuard,
     state: Rc<RefCell<UiState>>,
     tray: Rc<RefCell<Option<indicator::Tray>>>,
     socket: PathBuf,
+    /// Set once the sign-in window (or dashboard) has been presented, so the
+    /// startup prompt and a menu click cannot stack two dialogs.
+    presented: std::cell::Cell<bool>,
 }
 
 /// UI-side state, painted on the GTK main thread only.
@@ -114,8 +137,19 @@ fn activate(app: &gtk::Application, config: &LustlessConfig) -> Rc<Ctx> {
     // SNI tray when the desktop hosts one; headless otherwise (§13).
     let tray = indicator::Tray::new(&icon_dir);
 
+    // Every window the agent opens (the sign-in dialog) wears the CE shield,
+    // like the original client: the installed theme icon when the desktop has
+    // it, else the copy written into the runtime dir above. Without this the
+    // login window shows a generic GTK icon.
+    gtk::Window::set_default_icon_name("lustless");
+    let icon_file = icon_dir.join("lustless.png");
+    if icon_file.exists() {
+        let _ = gtk::Window::set_default_icon_from_file(&icon_file);
+    }
+
     let ctx = Rc::new(Ctx {
         app: app.clone(),
+        _hold: app.hold(),
         state: Rc::new(RefCell::new(UiState {
             snapshot: None,
             color: status::StatusColor::Gray,
@@ -124,6 +158,7 @@ fn activate(app: &gtk::Application, config: &LustlessConfig) -> Rc<Ctx> {
         })),
         tray: Rc::new(RefCell::new(tray)),
         socket,
+        presented: std::cell::Cell::new(false),
     });
 
     // Build the CE-vocabulary menu (§13) and attach it to the indicator.
@@ -164,6 +199,9 @@ fn activate(app: &gtk::Application, config: &LustlessConfig) -> Rc<Ctx> {
 /// (`lustless-agent --show`) and from re-activation of a running agent, so
 /// the agent is reachable even on desktops with no StatusNotifier host.
 fn present(ctx: &Rc<Ctx>) {
+    if ctx.presented.replace(true) {
+        return; // a window is already open — never stack two dialogs
+    }
     let signed_in = ctx
         .state
         .borrow()
@@ -176,7 +214,34 @@ fn present(ctx: &Rc<Ctx>) {
     } else {
         menu::Action::SignIn
     };
+    tracing::info!(target: "agent", "presenting the {action:?} window");
     handle_action(ctx, &action);
+    // `handle_action` blocks while the dialog is up, so the guard clears when
+    // the window closes and a later menu click can open it again.
+    ctx.presented.set(false);
+}
+
+/// Signed out? Show the sign-in window, like the original client: a fresh
+/// install starts this agent from the installer (and at every login from the
+/// autostart entry), so the user lands on a login prompt instead of having to
+/// find a tray icon or a menu entry.
+fn schedule_sign_in_prompt(ctx: &Rc<Ctx>) {
+    let ctx = Rc::clone(ctx);
+    glib::timeout_add_local_once(Duration::from_secs(2), move || {
+        // Two seconds in, the first policy snapshot has usually arrived;
+        // without one (daemon down) still prompt — that is the honest thing
+        // to show.
+        let signed_in = ctx
+            .state
+            .borrow()
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.signed_in)
+            .unwrap_or(false);
+        if !signed_in {
+            present(&ctx);
+        }
+    });
 }
 
 fn build_menu(parent: &gtk::Menu, entries: &[menu::MenuEntry], ctx: &Rc<Ctx>) {
@@ -579,7 +644,10 @@ fn credentials_dialog() -> Option<(String, String)> {
     grid.attach(&password, 1, 1, 1, 1);
     content.pack_start(&grid, true, true, 0);
 
-    dialog.set_default(Some(&gtk::Button::with_label("Sign in")));
+    // The default button is the dialog's own "Sign in" action button:
+    // `set_default` with a freshly built button pointed at a temporary widget
+    // that was dropped immediately (GTK critical, no default response).
+    dialog.set_default_response(gtk::ResponseType::Ok);
     dialog.show_all();
     let response = dialog.run();
     let credentials = (response == gtk::ResponseType::Ok)

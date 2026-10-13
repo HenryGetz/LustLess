@@ -9,8 +9,8 @@ curl -fsSL https://github.com/HenryGetz/LustLess/releases/latest/download/instal
 ```
 
 That's the whole install. It reads your distro, grabs the matching package,
-installs it and starts the tray agent. Then open **LustLess** from your
-application menu and sign in. Manual packages, caveats and uninstall are
+installs it, starts the agent — and the sign-in window opens by itself. Log
+in there. Manual packages, caveats and uninstall are
 [below](#other-ways-to-install).
 
 Cue 200 pages of reverse engineering, a Rust workspace, and seven distros
@@ -38,7 +38,8 @@ curl -fsSL https://github.com/HenryGetz/LustLess/releases/latest/download/instal
 
 It detects the distro family (apt / dnf / rpm-ostree / pacman / apk), pulls
 the matching package from the [latest release][rel], installs it with the
-native tool, and starts the per-user tray agent right away. Variants:
+native tool, starts the per-user agent — which then opens the sign-in window.
+Variants:
 
 ```sh
 # no curl
@@ -51,11 +52,16 @@ curl -fsSL https://raw.githubusercontent.com/HenryGetz/LustLess/main/scripts/ins
 
 ### Sign in
 
-The installer starts the agent for you. **Open “LustLess” from your
-application menu** — it shows the sign-in dialog; once signed in, the same
-entry opens the dashboard. No tray host on your desktop (plain Xfce, LXQt)?
-Doesn't matter, the menu entry is the same. Bare window manager?
-`lustlessctl signin <username>` does it from a terminal.
+The install **ends on the LustLess sign-in window** — a signed-out agent opens
+it automatically (the installer starts the agent for you, and it reopens at
+each graphical login until you sign in). No tray required. You can also open
+it any time from the **LustLess** entry in your application menu, or from a
+terminal:
+
+```sh
+lustless-agent --show            # the sign-in / dashboard window
+lustlessctl signin <username>    # headless (bare window manager, SSH)
+```
 
 ### Uninstall
 
@@ -73,12 +79,12 @@ Prefer to pick the file yourself? Match distro to package:
 
 | Distro | File | Command |
 |---|---|---|
-| Debian / Ubuntu / Zorin / Mint | `lustless_0.1.2_amd64.deb` | `sudo apt install ./lustless_0.1.2_amd64.deb` |
-| Fedora | `lustless-0.1.2-1.x86_64.rpm` | `sudo dnf install ./lustless-0.1.2-1.x86_64.rpm` |
-| Bazzite / immutable Fedora | `lustless-0.1.2-1.x86_64.rpm` | `sudo rpm-ostree install ./lustless-0.1.2-1.x86_64.rpm` && reboot |
-| Arch / EndeavourOS | `lustless-0.1.2-1-x86_64.pkg.tar.zst` | `sudo pacman -U ./lustless-0.1.2-1-x86_64.pkg.tar.zst` |
-| Alpine | `lustless-0.1.2-r0.apk` | `sudo cp lustless.rsa.pub /etc/apk/keys/ && sudo apk add --allow-untrusted ./lustless-0.1.2-r0.apk` |
-| SteamOS | `lustless-0.1.2-1-x86_64.pkg.tar.zst` | `steamos-readonly disable && sudo pacman -U ./lustless-0.1.2-1-x86_64.pkg.tar.zst && steamos-readonly enable` |
+| Debian / Ubuntu / Zorin / Mint | `lustless_0.1.4_amd64.deb` | `sudo apt install ./lustless_0.1.4_amd64.deb` |
+| Fedora | `lustless-0.1.4-1.x86_64.rpm` | `sudo dnf install ./lustless-0.1.4-1.x86_64.rpm` |
+| Bazzite / immutable Fedora | `lustless-0.1.4-1.x86_64.rpm` | `sudo rpm-ostree install ./lustless-0.1.4-1.x86_64.rpm` && reboot |
+| Arch / EndeavourOS | `lustless-0.1.4-1-x86_64.pkg.tar.zst` | `sudo pacman -U ./lustless-0.1.4-1-x86_64.pkg.tar.zst` |
+| Alpine | `lustless-0.1.4-r0.apk` | `sudo cp lustless.rsa.pub /etc/apk/keys/ && sudo apk add --allow-untrusted ./lustless-0.1.4-r0.apk` |
+| SteamOS | `lustless-0.1.4-1-x86_64.pkg.tar.zst` | `steamos-readonly disable && sudo pacman -U ./lustless-0.1.4-1-x86_64.pkg.tar.zst && steamos-readonly enable` |
 
 Everything above is on the [latest release][rel]. Or run
 `sudo sh scripts/install.sh` from a checkout.
