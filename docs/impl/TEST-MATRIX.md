@@ -71,18 +71,30 @@ sign-in path.
 Each row is the public one-liner run in that distro's own container (no
 credentials, real release download):
 
-| Family (distros) | Container | Result |
-|---|---|---|
-| apt (Debian, Ubuntu, Zorin, Mint) | `ubuntu:24.04` | PASS — fresh install and `0.1.0 → 0.1.4` upgrade; launcher + 5 icon sizes; plain agent start maps the sign-in window |
-| dnf (Fedora, Bazzite host) | `fedora:latest` | PASS — `lustless-0.1.4-1.x86_64` installed, scriptlets ran, launcher + hicolor icon present |
-| pacman (Arch, EndeavourOS) | `archlinux:latest` | PASS — `lustless 0.1.4-1`, dependencies resolved (libayatana-appindicator, polkit, …), launcher + hicolor icon present |
-| apk (Alpine) | `alpine:3.24` | PASS — 127 deps, OpenRC initd installed, launcher + hicolor icon present |
-| rpm-ostree (Bazzite, immutable Fedora) | `fedora` + stub | PASS (wiring) — downloads the `.rpm` and calls `rpm-ostree install <rpm>`; the ostree layering itself cannot run inside a container |
-| pacman on SteamOS | `ubuntu` + stubs | PASS (sequence) — `steamos-readonly disable` → `pacman -U` → `steamos-readonly enable`, on the Arch asset; a real read-only rootfs is not reproducible here |
+| Family (distros) | Container | Install | GUI login window |
+|---|---|---|---|
+| apt (Debian, Ubuntu, Zorin, Mint) | `ubuntu:24.04` | PASS — fresh install and `0.1.0 → 0.1.4` upgrade; launcher + 5 icon sizes | PASS — plain agent start maps `Sign in to LustLess` (263×134) |
+| dnf (Fedora, Bazzite host) | `fedora:latest` | PASS — `lustless-0.1.4-1.x86_64`, scriptlets ran, launcher + hicolor icon | PASS — `Sign in to LustLess` (261×134) |
+| pacman (Arch, EndeavourOS) | `archlinux:latest` | PASS — `lustless 0.1.4-1`, dependencies resolved (libayatana-appindicator, polkit, …) | PASS — `Sign in to LustLess` (269×134) |
+| apk (Alpine) | `alpine:3.24` | PASS — 127 deps, OpenRC initd, launcher + hicolor icon | PASS — musl build, `Sign in to LustLess` (276×134) |
+| rpm-ostree (Bazzite, immutable Fedora) | `fedora` + stub | PASS (wiring) — downloads the `.rpm` and calls `rpm-ostree install <rpm>` | not reproducible here — layers the same `.rpm` verified above |
+| pacman on SteamOS | `ubuntu` + stubs | PASS (sequence) — `steamos-readonly disable` → `pacman -U` → `steamos-readonly enable`, on the Arch asset | not reproducible here — same `.zst` verified above |
+
+GUI check method: headless `Xvfb` + `dbus-run-session` (the agent needs a
+session bus to register its `GApplication`), then a plain
+`/usr/bin/lustless-agent` start, asserting with `xdotool search --name`. In
+each distro the X/dbus tooling has to be installed **before** running the
+installer: installing redirects `/etc/resolv.conf` to the 127.0.0.2
+forwarder, so with no `lustlessd` running in the container the package
+manager loses DNS (`dnf`: "Could not resolve host: mirrors.fedoraproject.org"
+— the fail-closed behavior working as designed).
 
 Not reproducible in a container, still covered by the live-VM rows above:
-systemd starting the daemon, the graphical session picking up the tray, and
-rpm-ostree layering.
+systemd starting the daemon, the graphical session picking up the tray,
+rpm-ostree layering, and the installer's `systemctl --user enable --now`
+actually launching the window in a real desktop session (its two halves are
+verified separately: `enable --now` succeeding on Zorin Lite, and a plain
+agent start mapping the window in four distros).
 
 ## Install/upgrade path (v0.1.2+)
 
