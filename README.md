@@ -4,6 +4,15 @@ Covenant Eyes for Linux? Doesn't exist. Never has. Probably never will.
 
 So we made one.
 
+```sh
+curl -fsSL https://github.com/HenryGetz/LustLess/releases/latest/download/install.sh | sudo bash
+```
+
+That's the whole install. It reads your distro, grabs the matching package,
+installs it and starts the tray agent. Then open **LustLess** from your
+application menu and sign in. Manual packages, caveats and uninstall are
+[below](#other-ways-to-install).
+
 Cue 200 pages of reverse engineering, a Rust workspace, and seven distros
 of very specific suffering. What you get:
 
@@ -21,18 +30,46 @@ of very specific suffering. What you get:
 
 ## Install
 
-One line. Copy, paste, forget about it — detects your distro, downloads the
-right package, installs it, starts the tray agent:
+One line. Copy, paste, forget about it:
 
 ```sh
 curl -fsSL https://github.com/HenryGetz/LustLess/releases/latest/download/install.sh | sudo bash
 ```
 
-No curl? `wget -qO- <same-url> | sudo bash`. No bash (Alpine)? Same line with
-`| sudo sh`. Bleeding edge instead of the release:
-`curl -fsSL https://raw.githubusercontent.com/HenryGetz/LustLess/main/scripts/install.sh | sudo bash`
+It detects the distro family (apt / dnf / rpm-ostree / pacman / apk), pulls
+the matching package from the [latest release][rel], installs it with the
+native tool, and starts the per-user tray agent right away. Variants:
 
-Would rather choose yourself? You have a distro. We have a package. Match them:
+```sh
+# no curl
+wget -qO- https://github.com/HenryGetz/LustLess/releases/latest/download/install.sh | sudo bash
+# no bash (Alpine)
+curl -fsSL https://github.com/HenryGetz/LustLess/releases/latest/download/install.sh | sudo sh
+# bleeding edge instead of the release
+curl -fsSL https://raw.githubusercontent.com/HenryGetz/LustLess/main/scripts/install.sh | sudo bash
+```
+
+### Sign in
+
+The installer starts the agent for you. **Open “LustLess” from your
+application menu** — it shows the sign-in dialog; once signed in, the same
+entry opens the dashboard. No tray host on your desktop (plain Xfce, LXQt)?
+Doesn't matter, the menu entry is the same. Bare window manager?
+`lustlessctl signin <username>` does it from a terminal.
+
+### Uninstall
+
+Reverses everything — DNS, browser policies and polkit state come back
+exactly as found:
+
+```sh
+sudo apt purge lustless      # or: sudo dnf remove / sudo rpm-ostree uninstall
+                             #     sudo pacman -R / sudo apk del
+```
+
+## Other ways to install
+
+Prefer to pick the file yourself? Match distro to package:
 
 | Distro | File | Command |
 |---|---|---|
@@ -43,23 +80,8 @@ Would rather choose yourself? You have a distro. We have a package. Match them:
 | Alpine | `lustless-0.1.0-r0.apk` | `sudo cp lustless.rsa.pub /etc/apk/keys/ && sudo apk add --allow-untrusted ./lustless-0.1.0-r0.apk` |
 | SteamOS | `lustless-0.1.0-1-x86_64.pkg.tar.zst` | `steamos-readonly disable && sudo pacman -U ./lustless-0.1.0-1-x86_64.pkg.tar.zst && steamos-readonly enable` |
 
-All of it: [latest release](https://github.com/HenryGetz/LustLess/releases/latest).
-
-Can't be bothered to choose? `scripts/install.sh` figures it out for you.
-
-After install, the tray agent is already running for your user (the installer
-starts it). **Sign in from the “LustLess” entry in your application menu** —
-it opens the sign-in dialog; once signed in, the same entry opens the
-dashboard. On a bare window manager with no tray there is still
-`lustlessctl signin <username>`.
-
-Headless/no-tray hosts (LXQt, plain Xfce without the indicator plugin): the
-same application-menu entry is the sign-in surface, and notifications report
-state changes.
-
-Uninstall reverses everything — your DNS, browser policies and polkit state
-come back exactly as found. `sudo apt purge lustless` (or the dnf/rpm/pacman/
-apk equivalent). It's politer than you are.
+Everything above is on the [latest release][rel]. Or run
+`sudo sh scripts/install.sh` from a checkout.
 
 ## Does it actually work
 
@@ -84,3 +106,5 @@ all this) · `packaging/testbed/` (the eleven-VM torture chamber) ·
 `scripts/smoke-local.sh`
 
 Experimental. Things may change. Your screen still never leaves your machine.
+
+[rel]: https://github.com/HenryGetz/LustLess/releases/latest
