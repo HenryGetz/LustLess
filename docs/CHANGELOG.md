@@ -18,6 +18,9 @@
 - Maintainer helper tolerates a bind-mounted `/etc/resolv.conf` (containers,
   WSL): removal fails `EBUSY` there, which previously aborted the whole
   `configure` step.
+- `install.sh` is published as a release asset, so the copy-paste one-liner
+  can be release-pinned:
+  `curl -fsSL https://github.com/HenryGetz/LustLess/releases/latest/download/install.sh | sudo bash`.
 
 ## v0.1.1 — multi-distro packaging + live-VM verification matrix
 

@@ -21,16 +21,16 @@ of very specific suffering. What you get:
 
 ## Install
 
-Copy-paste, forget about it — detects your distro, downloads the right
-package, installs it:
+One line. Copy, paste, forget about it — detects your distro, downloads the
+right package, installs it, starts the tray agent:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/HenryGetz/LustLess/main/scripts/install.sh | sudo bash
+curl -fsSL https://github.com/HenryGetz/LustLess/releases/latest/download/install.sh | sudo bash
 ```
 
-(Alpine has no curl by default: `apk add curl` first, or pipe into `sh` —
-the script is POSIX. On a private checkout, `git clone` and run
-`sudo sh scripts/install.sh`.)
+No curl? `wget -qO- <same-url> | sudo bash`. No bash (Alpine)? Same line with
+`| sudo sh`. Bleeding edge instead of the release:
+`curl -fsSL https://raw.githubusercontent.com/HenryGetz/LustLess/main/scripts/install.sh | sudo bash`
 
 Would rather choose yourself? You have a distro. We have a package. Match them:
 
