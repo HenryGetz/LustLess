@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased — sign-in surface on tray-less desktops
+## v0.1.2 — sign-in surface, one-liner installer, honest version numbers
+
+### Install
+
+- **Copy-paste one-liner**, release-pinned and verified unauthenticated on
+  Ubuntu 24.04 and Alpine 3.24:
+  `curl -fsSL https://github.com/HenryGetz/LustLess/releases/latest/download/install.sh | sudo bash`
+  (plus `wget …| sudo bash`, `…| sudo sh`, and the raw-`main` variant).
+  `install.sh` is published as a release asset; the README leads with it and
+  the per-distro package table moved to "Other ways to install".
+- `install.sh` no longer aborts on `set -o pipefail`-less shells, downloads
+  into a world-readable temp dir (apt's `_apt` sandbox user could not read
+  the 0700 one — it warned "Download is performed unsandboxed as root"),
+  installs with Recommends (the Xfce tray host `xfce4-indicator-plugin`),
+  and starts the per-user tray agent for the invoking user right away.
+
+### Fixed
 
 - **Application-menu launcher** shipped by every format
   (`/usr/share/applications/lustless-agent.desktop`,
@@ -8,19 +24,25 @@
   the dashboard when signed in. Previously the package shipped only the
   hidden (`NoDisplay=true`) autostart entry, so there was nothing in the
   application menu and no sign-in path on a desktop without an SNI host.
-- `lustless-agent --show` / re-activation of a running agent now presents
-  that surface; `--signin` is an alias.
-- `scripts/install.sh` no longer passes `--no-install-recommends` (it
-  suppressed the Xfce StatusNotifier host, `xfce4-indicator-plugin`, so the
-  tray silently ran headless on Zorin/Xubuntu) and now starts the per-user
-  tray agent for the invoking user immediately instead of waiting for the
-  next login.
+  `lustless-agent --show` / re-activation of a running agent presents that
+  surface; `--signin` is an alias.
 - Maintainer helper tolerates a bind-mounted `/etc/resolv.conf` (containers,
   WSL): removal fails `EBUSY` there, which previously aborted the whole
-  `configure` step.
-- `install.sh` is published as a release asset, so the copy-paste one-liner
-  can be release-pinned:
-  `curl -fsSL https://github.com/HenryGetz/LustLess/releases/latest/download/install.sh | sudo bash`.
+  `configure` step. Its configure message now says the agent starts at login
+  and that the installer already enabled it, instead of telling every user to
+  run `systemctl --user …` right after the installer had done so.
+- **Versions are real again**: package version `0.1.2` (was clobbered in
+  place under `0.1.0`, which made upgrades print "Unpacking 0.1.0 over
+  0.1.0" and left no way to tell builds apart). Release tag, package
+  version, and `lustless --version` (workspace `CARGO_PKG_VERSION`) now
+  agree.
+- Two test defects that made the suite red for reasons unrelated to the code
+  under test: the spool startup-cleanup test hardcoded folder names while
+  cleanup derives age from the transaction timestamp *in the name* (it passed
+  only on the day the fixture dates were written), and the install-record test
+  pinned `client.version` to the literal `0.1.0`. Both now derive their
+  fixtures (clock-relative name / sentinel version), so a version or date
+  change can no longer masquerade as a bug.
 
 ## v0.1.1 — multi-distro packaging + live-VM verification matrix
 

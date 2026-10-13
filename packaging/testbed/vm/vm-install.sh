@@ -21,11 +21,11 @@ detect() {
 family="$(detect)"
 echo "== family: $family"
 case "$family" in
-    apt)        pkg="lustless_0.1.0_amd64.deb" ;;
-    dnf)        pkg="lustless-0.1.0-1.x86_64.rpm" ;;
-    rpm-ostree) pkg="lustless-0.1.0-1.x86_64.rpm" ;;
-    pacman)     pkg="lustless-0.1.0-1-x86_64.pkg.tar.zst" ;;
-    apk)        pkg="lustless-0.1.0-r0.apk" ;;
+    apt)        pkg="lustless_0.1.2_amd64.deb" ;;
+    dnf)        pkg="lustless-0.1.2-1.x86_64.rpm" ;;
+    rpm-ostree) pkg="lustless-0.1.2-1.x86_64.rpm" ;;
+    pacman)     pkg="lustless-0.1.2-1-x86_64.pkg.tar.zst" ;;
+    apk)        pkg="lustless-0.1.2-r0.apk" ;;
     *) echo "vm-install: unsupported family"; exit 1 ;;
 esac
 

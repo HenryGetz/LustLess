@@ -1,5 +1,5 @@
 Package: lustless
-Version: 0.1.0
+Version: 0.1.2
 Section: net
 Priority: optional
 Architecture: amd64

@@ -1,6 +1,6 @@
 [package]
 name = "lustless-core"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 description = "Shared contract surface for the LustLess workspace (docs/impl/CONTRACTS.md §3)"
 

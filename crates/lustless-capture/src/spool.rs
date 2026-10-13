@@ -648,6 +648,16 @@ mod tests {
         assert!(!folder.exists());
     }
 
+    /// A transaction folder name in the on-disk format, `ago` before now.
+    /// Fixtures MUST be relative to the clock: `cleanup_orphaned` reads the
+    /// transaction time out of the *name*, so hardcoded dates turn into
+    /// "everything is stale" the day after they were written.
+    fn folder_name_ago(ago: Duration) -> String {
+        let when = SystemTime::now() - ago;
+        let stamp: chrono::DateTime<chrono::Utc> = when.into();
+        stamp.format(FOLDER_NAME_FORMAT).to_string()
+    }
+
     #[test]
     fn startup_cleanup_removes_incomplete_and_stale_folders_keeps_fresh_ready() {
         let dir = tempfile::tempdir().unwrap();
@@ -655,15 +665,15 @@ mod tests {
         let root = pdl_root(spool, "tester");
         fs::DirBuilder::new().recursive(true).create(&root).unwrap();
 
-        let incomplete = root.join("2026-10-11T00-00-00.000000");
+        let incomplete = root.join(folder_name_ago(Duration::from_secs(600)));
         fs::create_dir(&incomplete).unwrap();
         fs::write(incomplete.join("im0.png"), b"partial").unwrap();
 
-        let stale = root.join("2026-10-11T00-00-01.000000");
+        let stale = root.join(folder_name_ago(Duration::from_secs(300)));
         fs::create_dir(&stale).unwrap();
         fs::write(stale.join(READY_MARKER), b"").unwrap();
 
-        let fresh = root.join("2026-10-11T23-59-59.000000");
+        let fresh = root.join(folder_name_ago(Duration::from_secs(0)));
         fs::create_dir(&fresh).unwrap();
         fs::write(fresh.join(READY_MARKER), b"").unwrap();
 

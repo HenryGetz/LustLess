@@ -69,7 +69,7 @@ pub struct ClientBlock {
     pub architecture: String,
     /// OS release string (e.g. `/etc/os-release` `VERSION_ID`).
     pub platform_version: String,
-    /// Client version (§1: `0.1.0` — see
+    /// Client version (§1: `0.1.2` — see
     /// [`LUSTLESS_VERSION`](crate::LUSTLESS_VERSION)).
     pub version: String,
 }
@@ -486,7 +486,10 @@ mod tests {
 
     #[test]
     fn install_record_shape() {
-        let client = ClientBlock::new("64", "22.04", "0.1.0");
+        // Sentinel version, deliberately not `LUSTLESS_VERSION`: this pins that
+        // the emitted record carries the client block through verbatim, and it
+        // must not start failing every time the product version is bumped.
+        let client = ClientBlock::new("64", "22.04", "9.9.9-sentinel");
         let ctx = RecordContext::new(&client, "ts", "created");
         let record = install_activity_record(
             &ctx,
@@ -504,6 +507,6 @@ mod tests {
         assert_eq!(inner["platform"], json!("Linux"));
         assert_eq!(inner["platformVersion"], json!("22.04"));
         assert_eq!(inner["architecture"], json!("64"));
-        assert_eq!(inner["client"]["version"], json!(crate::LUSTLESS_VERSION));
+        assert_eq!(inner["client"]["version"], json!("9.9.9-sentinel"));
     }
 }

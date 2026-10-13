@@ -640,9 +640,12 @@ cmd_configure() {
             "installActivityRecord: lustless $version configured (dns_stack=$stack)" \
             || true
     fi
-    log "installed. Per-user tray agent — each user should run:"
+    log "installed. The tray agent starts at login (XDG autostart). To start"
+    log "it now, for your user:"
     log "  systemctl --user daemon-reload"
     log "  systemctl --user enable --now lustless-agent.service"
+    log "(the curl one-liner and scripts/install.sh already do this for the"
+    log " user who ran them)"
     print_flavor_hint
 }
 

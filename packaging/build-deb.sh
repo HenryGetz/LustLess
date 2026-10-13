@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build lustless_0.1.0_amd64.deb.
+# Build lustless_0.1.2_amd64.deb.
 #
 #   packaging/build-deb.sh               full build: compile the Cargo
 #                                        workspace against the glibc 2.35
@@ -13,14 +13,14 @@
 #                                        2.35-compatible; repackage only)
 #
 # Runnable from anywhere; paths resolve relative to the repo root. Output:
-#   ./lustless_0.1.0_amd64.deb
+#   ./lustless_0.1.2_amd64.deb
 #
 # Model bundle: staged automatically by packaging/stage.sh (see that script).
 # Without it the package still builds — screen accountability needs the
 # bundle at runtime (see packaging/README.md). No placeholder artifacts.
 set -euo pipefail
 
-VERSION="0.1.0"
+VERSION="0.1.2"
 ARCH="amd64"
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -57,6 +57,10 @@ install -m 0755 "$repo_root/packaging/debian/postrm"    "$stage/DEBIAN/postrm"
 
 installed_size="$(du -sk "$stage" | cut -f1)"
 sed -i "/^Description:/i Installed-Size: $installed_size" "$stage/DEBIAN/control"
+# The version lives in this script's $VERSION, never duplicated in the
+# checked-in control file (a stale copy there once shipped 0.1.2 binaries as
+# a 0.1.0 package).
+sed -i "s/^Version: .*/Version: $VERSION/" "$stage/DEBIAN/control"
 
 # --- Build ------------------------------------------------------------------
 dpkg-deb --build --root-owner-group "$stage" "$out"

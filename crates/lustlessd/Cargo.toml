@@ -1,6 +1,6 @@
 [package]
 name = "lustlessd"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 description = "LustLess system daemon: IPC server, session/policy state machine, capture loop + classifier supervision, DNS lifecycle (docs/impl/CONTRACTS.md §4–§14)"
 license = "Apache-2.0"

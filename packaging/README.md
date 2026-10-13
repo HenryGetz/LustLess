@@ -9,10 +9,10 @@ checklist):
 
 | package | file | covers |
 |---|---|---|
-| `.deb` | `lustless_0.1.0_amd64.deb` | Debian Stable, Ubuntu LTS, Zorin OS 17, Linux Mint |
-| `.rpm` | `lustless-0.1.0-1.x86_64.rpm` | Fedora Workstation, Bazzite (`rpm-ostree install`) |
-| Arch | `lustless-0.1.0-1-x86_64.pkg.tar.zst` | Arch Linux, SteamOS (`pacman -U`) |
-| `.apk` | `lustless-0.1.0-r0.apk` | Alpine Linux (musl build, OpenRC service) |
+| `.deb` | `lustless_0.1.2_amd64.deb` | Debian Stable, Ubuntu LTS, Zorin OS 17, Linux Mint |
+| `.rpm` | `lustless-0.1.2-1.x86_64.rpm` | Fedora Workstation, Bazzite (`rpm-ostree install`) |
+| Arch | `lustless-0.1.2-1-x86_64.pkg.tar.zst` | Arch Linux, SteamOS (`pacman -U`) |
+| `.apk` | `lustless-0.1.2-r0.apk` | Alpine Linux (musl build, OpenRC service) |
 
 One glibc-2.35 build (ubuntu:22.04 container) feeds the first three; Alpine
 gets a separate musl build. All four are assembled from the **same staging
@@ -59,18 +59,18 @@ release):
 
 ```sh
 # from the repo root, or a checked-out tree
-scripts/install.sh ./lustless_0.1.0_amd64.deb     # local file
+scripts/install.sh ./lustless_0.1.2_amd64.deb     # local file
 scripts/install.sh                                # download + install
 ```
 
 Or with the native tools:
 
 ```sh
-sudo apt install ./lustless_0.1.0_amd64.deb        # Debian/Ubuntu/Zorin/Mint
-sudo dnf install ./lustless-0.1.0-1.x86_64.rpm     # Fedora
-sudo rpm-ostree install ./lustless-0.1.0-1.x86_64.rpm && sudo reboot   # Bazzite
-sudo pacman -U ./lustless-0.1.0-1-x86_64.pkg.tar.zst                   # Arch/SteamOS
-sudo apk add --allow-untrusted ./lustless-0.1.0-r0.apk                 # Alpine
+sudo apt install ./lustless_0.1.2_amd64.deb        # Debian/Ubuntu/Zorin/Mint
+sudo dnf install ./lustless-0.1.2-1.x86_64.rpm     # Fedora
+sudo rpm-ostree install ./lustless-0.1.2-1.x86_64.rpm && sudo reboot   # Bazzite
+sudo pacman -U ./lustless-0.1.2-1-x86_64.pkg.tar.zst                   # Arch/SteamOS
+sudo apk add --allow-untrusted ./lustless-0.1.2-r0.apk                 # Alpine
 ```
 
 Removal uses the same tool (`apt purge` / `dnf remove` / `rpm -e` /
@@ -100,10 +100,10 @@ packaging/
                                (target/pkg-root) — the single source for
                                all four package formats, with a libc-family
                                guard against packaging the wrong binaries
-  build-deb.sh                 build lustless_0.1.0_amd64.deb
-  build-rpm.sh                 build lustless-0.1.0-1.x86_64.rpm
-  build-arch.sh                build lustless-0.1.0-1-x86_64.pkg.tar.zst
-  build-apk.sh                 build lustless-0.1.0-r0.apk (Alpine adaptation:
+  build-deb.sh                 build lustless_0.1.2_amd64.deb
+  build-rpm.sh                 build lustless-0.1.2-1.x86_64.rpm
+  build-arch.sh                build lustless-0.1.2-1-x86_64.pkg.tar.zst
+  build-apk.sh                 build lustless-0.1.2-r0.apk (Alpine adaptation:
                                systemd units dropped, OpenRC initd added)
   README.md                    this file
   maintainer/
@@ -178,10 +178,10 @@ Requirements: Docker (all builds are hermetic container builds). From the
 repo root:
 
 ```sh
-packaging/build-deb.sh                # full build → ./lustless_0.1.0_amd64.deb
-packaging/build-rpm.sh                # full build → ./lustless-0.1.0-1.x86_64.rpm
-packaging/build-arch.sh               # full build → ./lustless-0.1.0-1-x86_64.pkg.tar.zst
-packaging/build-apk.sh                # full build → ./lustless-0.1.0-r0.apk (musl)
+packaging/build-deb.sh                # full build → ./lustless_0.1.2_amd64.deb
+packaging/build-rpm.sh                # full build → ./lustless-0.1.2-1.x86_64.rpm
+packaging/build-arch.sh               # full build → ./lustless-0.1.2-1-x86_64.pkg.tar.zst
+packaging/build-apk.sh                # full build → ./lustless-0.1.2-r0.apk (musl)
 
 packaging/build-deb.sh --skip-build   # repackage target/release/ binaries
 ```
