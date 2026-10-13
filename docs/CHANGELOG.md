@@ -26,6 +26,14 @@ thread, so it looked installed but did nothing. Fixed:
   daemon discarded the **whole** configuration file and silently fell back to
   defaults. The list is now quoted per element.
 - Package/CLI version `0.1.4`; installer release-pinned to `v0.1.4`.
+- `install.sh` opens a read-only filesystem for the SteamOS `pacman` branch
+  (`steamos-readonly disable` → `pacman -U` → `steamos-readonly enable`,
+  restored on failure too). The installer script was refreshed in place on the
+  v0.1.4 release — the four packages are byte-identical to what v0.1.4 shipped.
+- Installer branches exercised per family at this version (`docs/impl/TEST-MATRIX.md`):
+  apt (Ubuntu 24.04), dnf (Fedora), pacman (Arch), apk (Alpine) — plus
+  rpm-ostree and the SteamOS read-only sequence against stubs, since neither
+  can run for real in a container.
 
 Verified on a clean container: fresh install via the public one-liner, then a
 plain agent start maps a window titled “Sign in to LustLess”.

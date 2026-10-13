@@ -82,7 +82,19 @@ case "$family" in
         as_root rpm-ostree install "$pkg" \
             && echo "install.sh: layered — reboot to activate (systemd unit starts on first boot)" ;;
     pacman)
-        as_root pacman -U --noconfirm "$pkg" ;;
+        # SteamOS (and other immutable Arch images) mount / read-only: the
+        # vendor tool has to open it before pacman can write, and it is put
+        # back afterwards either way (also on failure, via `die`).
+        if command -v steamos-readonly >/dev/null 2>&1; then
+            as_root steamos-readonly disable
+            if ! as_root pacman -U --noconfirm "$pkg"; then
+                as_root steamos-readonly enable || true
+                die "pacman -U failed on the read-only filesystem"
+            fi
+            as_root steamos-readonly enable
+        else
+            as_root pacman -U --noconfirm "$pkg"
+        fi ;;
     apk)
         as_root apk add --allow-untrusted "$pkg" ;;
 esac

@@ -66,6 +66,24 @@ passed `--no-install-recommends`, which suppressed the Xfce SNI host — on a
 Zorin Lite / Xubuntu desktop the agent then ran headless with no visible
 sign-in path.
 
+### Installer branches, one per package family (v0.1.4)
+
+Each row is the public one-liner run in that distro's own container (no
+credentials, real release download):
+
+| Family (distros) | Container | Result |
+|---|---|---|
+| apt (Debian, Ubuntu, Zorin, Mint) | `ubuntu:24.04` | PASS — fresh install and `0.1.0 → 0.1.4` upgrade; launcher + 5 icon sizes; plain agent start maps the sign-in window |
+| dnf (Fedora, Bazzite host) | `fedora:latest` | PASS — `lustless-0.1.4-1.x86_64` installed, scriptlets ran, launcher + hicolor icon present |
+| pacman (Arch, EndeavourOS) | `archlinux:latest` | PASS — `lustless 0.1.4-1`, dependencies resolved (libayatana-appindicator, polkit, …), launcher + hicolor icon present |
+| apk (Alpine) | `alpine:3.24` | PASS — 127 deps, OpenRC initd installed, launcher + hicolor icon present |
+| rpm-ostree (Bazzite, immutable Fedora) | `fedora` + stub | PASS (wiring) — downloads the `.rpm` and calls `rpm-ostree install <rpm>`; the ostree layering itself cannot run inside a container |
+| pacman on SteamOS | `ubuntu` + stubs | PASS (sequence) — `steamos-readonly disable` → `pacman -U` → `steamos-readonly enable`, on the Arch asset; a real read-only rootfs is not reproducible here |
+
+Not reproducible in a container, still covered by the live-VM rows above:
+systemd starting the daemon, the graphical session picking up the tray, and
+rpm-ostree layering.
+
 ## Install/upgrade path (v0.1.2+)
 
 Container runs (ubuntu:24.04, plain `bash`, no GitHub credentials — the
