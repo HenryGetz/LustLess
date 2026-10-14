@@ -103,7 +103,19 @@ impl UdpOwnerLookup for NetlinkProcDiag {
 /// address the query arrived on.
 pub struct ProcessAttributor {
     lookup: Arc<dyn UdpOwnerLookup>,
+    /// Netlink circuit breaker: after a failed/timed-out `inet_diag` dump,
+    /// stop attempting attribution for a cooldown. The dump carries a 2 s I/O
+    /// timeout (so a wedged kernel can never hang a query), and without this
+    /// breaker an environment where SOCK_DIAG does not answer — restricted
+    /// containers, hardened kernels, WSL — pays those 2 s on *every* lookup,
+    /// which reads as "DNS is broken" to the user.
+    netlink_retry_after: EngineMutex<Option<std::time::Instant>>,
+    /// How long the breaker stays open (30 s in production).
+    cooldown: std::time::Duration,
 }
+
+/// How long attribution stays off after a netlink failure.
+const NETLINK_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl ProcessAttributor {
     /// Production attributor (inet_diag + `/proc`).
@@ -113,19 +125,54 @@ impl ProcessAttributor {
 
     /// Attributor over an injected backend (tests, alternative transports).
     pub fn with_lookup(lookup: Arc<dyn UdpOwnerLookup>) -> Self {
-        Self { lookup }
+        Self::with_lookup_and_cooldown(lookup, NETLINK_COOLDOWN)
+    }
+
+    /// As [`Self::with_lookup`], with an explicit breaker cooldown (tests).
+    pub fn with_lookup_and_cooldown(
+        lookup: Arc<dyn UdpOwnerLookup>,
+        cooldown: std::time::Duration,
+    ) -> Self {
+        Self {
+            lookup,
+            cooldown,
+            netlink_retry_after: EngineMutex::new(None),
+        }
     }
 
     /// Attribute the query's client port; any miss/error yields
     /// [`Attribution::default`] (`unknown`/0, §8).
     pub fn attribute(&self, client_port: u16, local: IpAddr) -> Attribution {
+        if self.breaker_open() {
+            return Attribution::default();
+        }
         match self.lookup.owner_for_port(client_port, local) {
             Ok(Some((pid, name))) if pid > 0 && !name.is_empty() => Attribution {
                 process_id: pid as i64,
                 process_name: name,
             },
             Ok(_) => Attribution::default(),
-            Err(_) => Attribution::default(),
+            Err(err) => {
+                // A dump that errors or times out means netlink is not usable
+                // here; open the breaker instead of paying the timeout again.
+                tracing::debug!(target: "attribution", "inet_diag dump failed ({err}); attribution paused for {:?}", self.cooldown);
+                *self.netlink_retry_after.lock() = Some(std::time::Instant::now() + self.cooldown);
+                Attribution::default()
+            }
+        }
+    }
+
+    fn breaker_open(&self) -> bool {
+        // One guard for the whole check: re-locking inside a `match` on the
+        // locked value would deadlock on this non-reentrant mutex.
+        let mut retry_after = self.netlink_retry_after.lock();
+        match *retry_after {
+            Some(until) if std::time::Instant::now() < until => true,
+            Some(_) => {
+                *retry_after = None;
+                false
+            }
+            None => false,
         }
     }
 }
@@ -535,5 +582,49 @@ mod tests {
         );
         assert_eq!(Attribution::default().process_id, UNKNOWN_PROCESS_ID);
         assert_eq!(Attribution::default().process_name, UNKNOWN_PROCESS_NAME);
+    }
+
+    /// A netlink dump that fails must not be retried on every query: in an
+    /// environment where SOCK_DIAG never answers (restricted containers,
+    /// hardened kernels) each attempt costs its 2 s I/O timeout, which the
+    /// user experiences as "DNS is broken".
+    #[test]
+    fn failed_netlink_dump_pauses_attribution_until_the_cooldown_expires() {
+        struct FailingLookup {
+            calls: Arc<EngineMutex<u32>>,
+        }
+        impl UdpOwnerLookup for FailingLookup {
+            fn owner_for_port(
+                &self,
+                _port: u16,
+                _local: IpAddr,
+            ) -> std::io::Result<Option<(i32, String)>> {
+                *self.calls.lock() += 1;
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "inet_diag timeout",
+                ))
+            }
+        }
+
+        let calls = Arc::new(EngineMutex::new(0u32));
+        let attributor = ProcessAttributor::with_lookup_and_cooldown(
+            Arc::new(FailingLookup {
+                calls: Arc::clone(&calls),
+            }),
+            std::time::Duration::from_millis(50),
+        );
+        let local: IpAddr = "127.0.0.2".parse().unwrap();
+
+        assert_eq!(attributor.attribute(1, local), Attribution::default());
+        assert_eq!(*calls.lock(), 1, "the first query pays the dump once");
+
+        assert_eq!(attributor.attribute(2, local), Attribution::default());
+        assert_eq!(attributor.attribute(3, local), Attribution::default());
+        assert_eq!(*calls.lock(), 1, "the breaker skips the dump while open");
+
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert_eq!(attributor.attribute(4, local), Attribution::default());
+        assert_eq!(*calls.lock(), 2, "after the cooldown it tries once more");
     }
 }

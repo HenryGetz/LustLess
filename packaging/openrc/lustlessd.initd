@@ -19,11 +19,11 @@ directory="/var/lib/lustless"
 output_log="/var/log/lustless/lustlessd.log"
 error_log="/var/log/lustless/lustlessd.log"
 
-# CE's 3-restarts-in-10s crash budget (CONTRACTS §11): supervise-daemon
-# restarts on failure after 1s; OpenRC's start-stop-daemon has no burst
-# counter, the daemon's own exit discipline is the primary guard.
+# The daemon is the machine's resolver (system DNS points at 127.0.0.2): it is
+# restarted without limit so a crashed filter never leaves the box with no name
+# resolution. `respawn_max=0` is supervise-daemon's "unlimited" (CONTRACTS §11).
 respawn_delay=1
-respawn_max=10
+respawn_max=0
 
 depend() {
     need net

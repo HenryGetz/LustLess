@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.1.5 — DNS that stays alive (and answers instantly when signed out)
+
+Fail-closed is about *filtering decisions*, not about taking the machine off
+the network. Three changes:
+
+- **The installer no longer points system DNS at a filter that is not
+  answering.** `lustless-maintainer` probes 127.0.0.2:53 (`dig`/`nslookup`,
+  else a listening-socket check) and, when nothing answers, leaves
+  `/etc/resolv.conf` alone and says what to do. Previously a machine where the
+  daemon could not start (no systemd, crash loop, container) lost *all* name
+  resolution — no package manager, no updates, and nothing on screen saying
+  why.
+- **The daemon is never left dead**: `Restart=always` with
+  `StartLimitIntervalSec=0` (was 3 restarts per 10 s, after which systemd gave
+  up and left the box without a resolver), OpenRC `respawn_max=0`. The unit
+  also re-asserts the DNS redirect on every start
+  (`ExecStartPost=… dns-redirect`), so a machine installed while the filter
+  was broken becomes filtered as soon as it runs — and the command is a no-op
+  when the redirect is already in place.
+- **Blocked answers are instant.** Signed-out lookups took ~2 s because
+  per-query process attribution (a SOCK_DIAG netlink dump with a 2 s I/O
+  timeout) ran *before* the fail-closed shortcut, and that dump never answers
+  in restricted environments. The fail-closed branch now returns before
+  attribution, and a netlink failure opens a 30 s circuit breaker instead of
+  re-paying the timeout on every query. Measured in a container: 2055 ms →
+  4–20 ms per query, verdict unchanged (`blocked.lustless.local` →
+  127.0.0.2).
+- Package/CLI version `0.1.5`; installer release-pinned to `v0.1.5`.
+
 ## v0.1.4 — the agent's main loop actually runs
 
 **v0.1.3 shipped a broken agent: its GTK main loop returned the moment it

@@ -326,17 +326,19 @@ impl DnsServer {
         let question = &query.queries()[0];
         let domain = question.name().to_utf8().to_ascii_lowercase();
 
-        // §8 attribution: the client's UDP source port → socket owner.
-        let attribution: Attribution = self.attributor.attribute(client.port(), local.ip());
-
         // §8 lifecycle fail-closed flag (zero signed-in users ⇒ block all).
         let fail_closed_block = self.filter_state.lock().fail_closed_blocks_web();
         let filter_outage = self.health.lock().is_outage();
 
         // §8 fail-closed answers immediately: with no signed-in user there is
         // nothing to decide per upstream, so never make the client wait on
-        // DoH/user paths (which may themselves be unreachable).
+        // DoH/user paths (which may themselves be unreachable). This runs
+        // *before* attribution on purpose: attribution is a netlink dump whose
+        // 2 s I/O timeout would otherwise be added to every lookup on a
+        // machine that is signed out — i.e. to every lookup right after
+        // install — and a blanket block has no per-process decision to make.
         if fail_closed_block {
+            let attribution = Attribution::default();
             let verdict = decide(&crate::verdicts::VerdictInput {
                 fail_closed_block: true,
                 custom: self.policy.custom_override(&domain),
@@ -364,6 +366,9 @@ impl DnsServer {
             }
             return served;
         }
+
+        // §8 attribution: the client's UDP source port → socket owner.
+        let attribution: Attribution = self.attributor.attribute(client.port(), local.ip());
 
         // §8 dual resolution: filter (DoH) path and user path in parallel.
         let (filter_result, user_result) = tokio::join!(

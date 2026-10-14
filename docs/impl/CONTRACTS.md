@@ -15,7 +15,7 @@ Status vocabulary: **MUST/SHOULD/MAY** per RFC 2119.
 | item | value |
 |---|---|
 | product / package | `lustless` |
-| version | `0.1.4` (semver; `.deb` version = same) |
+| version | `0.1.5` (semver; `.deb` version = same) |
 | components | `lustlessd` (system daemon), `lustless-classifier` (scoring process, daemon-spawned), `lustless-agent` (per-session tray + dashboard helper), `lustlessctl` (admin/diagnostics CLI) |
 | kernel components | none (CE's observable surface is pure user mode — `re/findings/01-dynamic-recon/live-surface.md` §a–§f) |
 | target OS | **Zorin OS 17 (Lite and Core), Ubuntu 24.04, Xubuntu 24.04, Lubuntu 24.04** and generic systemd Linux desktops. Built against glibc 2.35 (ubuntu:22.04 build container) so one `.deb` runs on both 22.04-base (Zorin 17) and 24.04-base systems. Desktop-shell reality to respect: GNOME (Ubuntu/Zorin Core — SNI via AppIndicator extension, on by default in Ubuntu), Xfce (Xubuntu/Zorin Lite — SNI via `xfce4-indicator-plugin`), LXQt (Lubuntu — no SNI host; agent MUST degrade gracefully, §13) |
@@ -381,13 +381,29 @@ validation.
 
 ## 11. Watchdog, tamper, uninstall
 
-- `lustlessd.service`: `Restart=on-failure`, `RestartSec=1`,
-  `StartLimitIntervalSec=10`, `StartLimitBurst=3` (CE's 3-in-1s restart budget),
-  `After=network-online.target`, `WantedBy=multi-user.target`.
+- `lustlessd.service`: `Restart=always`, `RestartSec=1`,
+  `StartLimitIntervalSec=0` (never give up), `After=network-online.target`,
+  `WantedBy=multi-user.target`, and
+  `ExecStartPost=lustless-maintainer dns-redirect`.
   `lustless-agent.service` (user): `WantedBy=graphical-session.target`.
-- Crash budget (CE verbatim, `watchdog.md` §5/§7; `crash-reporting.md` §5):
-  per-uid `last_crash_at` + 10-minute no-relaunch suppress window + total counter; >3
-  restarts ⇒ stop auto-restart, escalate to a human-visible notification.
+  The daemon is the machine's resolver — system DNS points at 127.0.0.2 — so a
+  daemon left dead is a machine with no name resolution at all. It is therefore
+  restarted without limit; the *filtering* is what fails closed (a signed-out
+  or degraded filter answers "blocked"), never the resolver.
+  Alpine/OpenRC: `supervise-daemon` with `respawn_delay=1`, `respawn_max=0`
+  (unlimited).
+- DNS redirect discipline (`lustless-maintainer`): the redirect is applied
+  only after the forwarder *answers* on 127.0.0.2:53 (probed with
+  `dig`/`nslookup`, else a listening-socket check). If it does not answer, the
+  installer leaves system DNS untouched and says so; the unit's
+  `ExecStartPost` re-applies the redirect on every daemon start, so a machine
+  installed while the filter was broken cannot stay unfiltered once it runs.
+  `remove`/`purge` restore the original resolver.
+- Classifier crash budget (CE verbatim, `watchdog.md` §5/§7;
+  `crash-reporting.md` §5): per-uid `last_crash_at` + 10-minute no-relaunch
+  suppress window + total counter; >3 restarts ⇒ stop auto-restarting *the
+  classifier*, escalate to a human-visible notification. This is separate from
+  the daemon's own restart policy above.
 - Tamper protection = package ownership + ONE documented, polkit-gated, audited action
   `org.lustless.disable-protection` (also used by uninstall). No hidden disarm exports, no
   process-level anti-kill (`91-linux-mapping.md` §7).

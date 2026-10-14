@@ -27,6 +27,9 @@ set -e
 
 PREV_DIR=/var/lib/lustless/previous-config
 STATE_DIR=/var/lib/lustless
+# The filtering forwarder's listen address (CONTRACTS §8) — the single source
+# for every place the maintainer points system DNS at it.
+DNS=127.0.0.2
 POLKIT_SRC=/usr/share/lustless/polkit/org.lustless.policy
 POLKIT_DST=/usr/share/polkit-1/actions/org.lustless.policy
 BROWSER_POLICY_SRC=/usr/share/lustless/browser-policies
@@ -227,6 +230,19 @@ NM_EOF
 
 install_dns_redirect() {
     detected="$1"
+    # Pointing system DNS at 127.0.0.2 when nothing serves that socket takes
+    # the whole machine off the network — no name resolution at all, no
+    # package manager, no updates, and nothing on screen explaining why. That
+    # is breakage, not filtering: the *filtering decisions* are what fail
+    # closed (a signed-out or degraded filter answers "blocked"), and the
+    # redirect is only safe once the forwarder actually answers.
+    if ! wait_for_forwarder; then
+        log "WARNING: the LustLess filter is not answering on $DNS:53 yet —"
+        log "         leaving system DNS untouched so this machine keeps resolving."
+        log "         Start the filter and the redirect is applied automatically:"
+        log "           systemctl start lustlessd   (or: rc-service lustlessd start)"
+        return 0
+    fi
     if [ ! -f "$PREV_DIR/dns-stack" ]; then
         # Fresh install (or first configure after remove): capture originals.
         case "$detected" in
@@ -244,6 +260,64 @@ install_dns_redirect() {
         resolvconf-file)  write_forwarder_resolv_conf ;;
     esac
     echo "$detected" > "$PREV_DIR/dns-stack"
+}
+
+# Does the forwarder answer on 127.0.0.2:53? `dig`/`nslookup` prove it with a
+# real query (an answer of *any* kind counts — signed out, the filter answers
+# with a block verdict, which is the point); without them, a listening-socket
+# check is the best available evidence. With no probe tool at all the
+# redirect proceeds (the unit re-runs this on every start, and remove/purge
+# restore the original resolver either way).
+#
+# The timeouts are generous on purpose: with the upstream unreachable a
+# signed-out filter still answers, but only after its own upstream attempt
+# times out (~2 s observed), so a 1 s probe reports a live resolver as dead.
+forwarder_answers() {
+    if have dig; then
+        dig +time=3 +tries=1 +short "@$DNS" example.com >/dev/null 2>&1
+        return $?
+    fi
+    if have nslookup; then
+        nslookup -timeout=3 example.com "$DNS" >/dev/null 2>&1
+        return $?
+    fi
+    if have ss; then
+        ss -lun 2>/dev/null | grep -q "$DNS:53"
+        return $?
+    fi
+    if have netstat; then
+        netstat -lun 2>/dev/null | grep -q "$DNS:53"
+        return $?
+    fi
+    return 0
+}
+
+# The daemon binds its listener asynchronously, and the unit's ExecStartPost
+# races it — wait up to ~20 s (the probe itself can take seconds) before
+# deciding that the filter is not there.
+wait_for_forwarder() {
+    i=0
+    while [ "$i" -lt 5 ]; do
+        if forwarder_answers; then
+            return 0
+        fi
+        i=$((i + 1))
+        sleep 1
+    done
+    return 1
+}
+
+# Already redirected? (Cheap check, used by the per-start re-apply.)
+dns_redirected() {
+    case "$1" in
+        resolved)
+            have resolvectl && resolvectl dns 2>/dev/null | grep -q "$DNS" ;;
+        networkmanager)
+            grep -qs "$DNS" /etc/resolv.conf ;;
+        resolvconf-file)
+            grep -qs "^nameserver $DNS" /etc/resolv.conf ;;
+        *) return 1 ;;
+    esac
 }
 
 # Rewrite `user_resolvers` in the shipped config with the pre-redirect
@@ -634,10 +708,13 @@ cmd_configure() {
     create_state_dirs
     stack=$(detect_dns_stack)
     log "detected resolver stack: $stack"
+    # Start the filter *before* the redirect: the redirect is only applied
+    # once the forwarder answers (see install_dns_redirect), so a system where
+    # the daemon cannot start keeps its DNS.
+    enable_and_start_daemon
     install_dns_redirect "$stack"
     install_browser_policies
     install_polkit_action
-    enable_and_start_daemon
     write_install_marker "$version" "$stack"
     if have logger; then
         logger -t lustless-postinst \
@@ -651,6 +728,23 @@ cmd_configure() {
     log "(the curl one-liner and scripts/install.sh already do this for the"
     log " user who ran them)"
     print_flavor_hint
+}
+
+# Re-assert the DNS redirect after the daemon has started (systemd
+# ExecStartPost). Idempotent and cheap when already redirected; when the
+# redirect was skipped at install time because the filter was not answering,
+# this is what puts it back — so "install with the daemon broken" cannot
+# leave a machine permanently unfiltered.
+cmd_dns_redirect() {
+    stack=$(detect_dns_stack)
+    if dns_redirected "$stack"; then
+        return 0
+    fi
+    if ! wait_for_forwarder; then
+        log "dns-redirect: filter not answering on $DNS:53 — system DNS left untouched"
+        return 0
+    fi
+    install_dns_redirect "$stack"
 }
 
 cmd_remove() {
@@ -671,11 +765,12 @@ cmd_purge() {
 }
 
 case "${1:-}" in
-    configure) shift; cmd_configure "$@" ;;
-    remove)    shift; cmd_remove "$@" ;;
-    purge)     shift; cmd_purge "$@" ;;
+    configure)    shift; cmd_configure "$@" ;;
+    dns-redirect) cmd_dns_redirect ;;
+    remove)       shift; cmd_remove "$@" ;;
+    purge)        shift; cmd_purge "$@" ;;
     *)
-        echo "usage: lustless-maintainer {configure <version>|remove|purge}" >&2
+        echo "usage: lustless-maintainer {configure <version>|dns-redirect|remove|purge}" >&2
         exit 2
         ;;
 esac

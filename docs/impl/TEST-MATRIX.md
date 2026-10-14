@@ -84,10 +84,12 @@ GUI check method: headless `Xvfb` + `dbus-run-session` (the agent needs a
 session bus to register its `GApplication`), then a plain
 `/usr/bin/lustless-agent` start, asserting with `xdotool search --name`. In
 each distro the X/dbus tooling has to be installed **before** running the
-installer: installing redirects `/etc/resolv.conf` to the 127.0.0.2
-forwarder, so with no `lustlessd` running in the container the package
-manager loses DNS (`dnf`: "Could not resolve host: mirrors.fedoraproject.org"
-— the fail-closed behavior working as designed).
+installer: those runs predate v0.1.5, where installing redirected
+`/etc/resolv.conf` unconditionally, so with no `lustlessd` running in the
+container the package manager lost DNS (`dnf`: "Could not resolve host:
+mirrors.fedoraproject.org"). Since v0.1.5 the installer probes the forwarder
+first and leaves system DNS untouched when nothing answers — which is why the
+`dnf`/`pacman` rows can now install their tooling in either order.
 
 Not reproducible in a container, still covered by the live-VM rows above:
 systemd starting the daemon, the graphical session picking up the tray,
@@ -109,10 +111,27 @@ release and the script are fetched over the public URLs a user copies):
 | icons | `hicolor/{16x16,24x24,32x32,48x48,256x256}/apps/lustless.png` present in all four formats (deb 5 entries, rpm 5 files, zst/apk staged tree) |
 | **sign-in window** (v0.1.4) | plain `/usr/bin/lustless-agent` start under Xvfb + `dbus-run-session` maps a window titled `Sign in to LustLess` (`xdotool search --name`), i.e. install → launch → GUI login with no tray and no flags |
 
-Installing redirects `/etc/resolv.conf` to the 127.0.0.2 forwarder, so a
-machine whose `lustlessd` is stopped has no DNS until the daemon is back —
-expected fail-closed behavior, and why a container-based re-install needs
-its original resolver restored first.
+Installing used to redirect `/etc/resolv.conf` to the 127.0.0.2 forwarder
+unconditionally, so a machine where the daemon could not start (no systemd, a
+crash loop, a container) lost *all* name resolution. That is breakage, not
+fail-closed filtering, and v0.1.5 fixed it — see below.
+
+### DNS behaviour (v0.1.5)
+
+Fail-closed applies to filtering *decisions* (signed out ⇒ answers are block
+verdicts); the resolver itself must stay alive and fast.
+
+| Check | Method | Result |
+|---|---|---|
+| installer leaves DNS alone when the filter is not running | `lustless-maintainer configure` in a container with no daemon | PASS — `/etc/resolv.conf` byte-identical, `curl https://github.com` still resolves; the script prints the warning + `systemctl start lustlessd` |
+| redirect applied only when the forwarder answers | daemon started by hand, then `lustless-maintainer dns-redirect` | PASS — `/etc/resolv.conf` → `nameserver 127.0.0.2`; re-running is a no-op |
+| resolver answers instead of going silent | `dig @127.0.0.2 example.com` while signed out | PASS — `blocked.lustless.local. CNAME … A 127.0.0.2` (a block verdict, not a timeout) |
+| blocked answers are fast | six sequential `dig` queries, signed out | PASS — **2055 ms → 4–20 ms** per query after the fail-closed branch was moved ahead of process attribution (whose SOCK_DIAG dump has a 2 s I/O timeout) and a 30 s netlink circuit breaker was added |
+| daemon is never left dead | unit/initd policy | `Restart=always`, `StartLimitIntervalSec=0`, OpenRC `respawn_max=0` (was 3 restarts per 10 s, after which the resolver stayed dead) |
+
+Before v0.1.5 the daemon's own recorded latency for a blocked query was
+2040 ms (`lustlessctl dns-activity` shows the daemon-side `ms` column) — the
+netlink attribution timeout, paid on every lookup.
 
 ### Agent main loop (v0.1.4)
 

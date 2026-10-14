@@ -392,7 +392,7 @@ mod tests {
             AggTag {
                 aggregation: Aggregation::Indexed,
                 name: "client_version".into(),
-                value: "0.1.4".into(),
+                value: "0.1.5".into(),
             },
         ]
     }
@@ -485,7 +485,7 @@ mod tests {
             serde_json::from_str::<Value>(&tags).expect("tags JSON"),
             json!([
                 {"aggregation": "INCIDENTAL", "name": "bucket_size", "value": "3600"},
-                {"aggregation": "INDEXED", "name": "client_version", "value": "0.1.4"},
+                {"aggregation": "INDEXED", "name": "client_version", "value": "0.1.5"},
             ])
         );
         assert_eq!(

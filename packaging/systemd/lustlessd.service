@@ -20,16 +20,22 @@ Description=LustLess accountability daemon (screen accountability + DNS filterin
 Documentation=file:///etc/lustless/lustless.toml
 After=network-online.target
 Wants=network-online.target
-# CE's 3-restarts-in-10s crash budget (CONTRACTS §11).
-StartLimitIntervalSec=10
-StartLimitBurst=3
+# The daemon is the machine's resolver (system DNS points at 127.0.0.2), so it
+# must never be left dead: systemd restarts it forever, however often it
+# crashes. (The earlier 3-in-10s budget left a crashed daemon dead, and with
+# it every name lookup on the box.)
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=root
 Group=root
 ExecStart=/usr/bin/lustlessd
-Restart=on-failure
+# Re-assert the DNS redirect once the filter is up: applies it when the
+# installer had to skip it (filter not answering at install time) and is a
+# no-op when already in place. `-` so a failure here never fails the unit.
+ExecStartPost=-/usr/lib/lustless/lustless-maintainer dns-redirect
+Restart=always
 RestartSec=1
 RuntimeDirectory=lustless
 RuntimeDirectoryMode=0755

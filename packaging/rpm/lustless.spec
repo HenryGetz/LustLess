@@ -6,7 +6,7 @@
 # The build container mounts the repo at /src (packaging/build-rpm.sh).
 
 Name:           lustless
-Version:        0.1.4
+Version:        0.1.5
 Release:        1
 Summary:        Accountability client: screen accountability + DNS filtering (Linux edition)
 License:        Proprietary
