@@ -82,6 +82,11 @@ impl CrashType {
 }
 
 /// One crash the previous run left behind, ready to report.
+///
+/// Mirrors CE's record shape (`ClientCrashesAt` + count + the attachment group) and is kept as
+/// the documented model of it; the live reporting path reads the ledger files directly, so
+/// nothing constructs this yet.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CrashRecord {
     pub crash_type: CrashType,
@@ -108,6 +113,9 @@ impl CrashLedger {
         }
     }
 
+    /// The `<state_dir>/crash/` directory. Used by tests and kept for the
+    /// diagnostics path that reports a bundle's location.
+    #[allow(dead_code)]
     pub fn dir(&self) -> &Path {
         &self.dir
     }
@@ -151,7 +159,7 @@ impl CrashLedger {
             // SAFETY: the handler only writes a small file and re-raises.
             unsafe {
                 let mut action: libc::sigaction = std::mem::zeroed();
-                action.sa_sigaction = fatal_signal_handler as usize;
+                action.sa_sigaction = fatal_signal_handler as *const () as usize;
                 action.sa_flags = libc::SA_RESETHAND | libc::SA_NODEFER;
                 libc::sigemptyset(&mut action.sa_mask);
                 libc::sigaction(signal, &action, std::ptr::null_mut());
@@ -250,10 +258,7 @@ impl CrashLedger {
             let path = dir.join(format!("{name}.tar"));
             write_capped(&path, &bytes)?;
         }
-        write_capped(
-            &dir.join("state-summary.json"),
-            state_summary.as_bytes(),
-        )?;
+        write_capped(&dir.join("state-summary.json"), state_summary.as_bytes())?;
         Ok(dir)
     }
 }
@@ -280,12 +285,7 @@ extern "C" fn fatal_signal_handler(signal: libc::c_int) {
 
 /// Appends every file under `dir` (depth 2, CE's log groups) up to `cap`,
 /// honouring the running total cap.
-fn collect_files(
-    dir: &Path,
-    out: &mut Vec<u8>,
-    cap: u64,
-    total: &mut u64,
-) -> Result<(), String> {
+fn collect_files(dir: &Path, out: &mut Vec<u8>, cap: u64, total: &mut u64) -> Result<(), String> {
     let mut stack = vec![dir.to_path_buf()];
     while let Some(path) = stack.pop() {
         let entries = match fs::read_dir(&path) {
@@ -305,7 +305,9 @@ fn collect_files(
             if *total + meta.len() > ATTACH_TOTAL_CAP {
                 return Ok(()); // CE: stop at the 19 MB running total
             }
-            let Ok(bytes) = fs::read(&child) else { continue };
+            let Ok(bytes) = fs::read(&child) else {
+                continue;
+            };
             let name = child
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -352,11 +354,8 @@ fn stamp_from_unix(unix: i64) -> String {
 }
 
 fn unix_from_stamp(stamp: &str) -> Option<i64> {
-    let parsed = time::OffsetDateTime::parse(
-        stamp,
-        &time::format_description::well_known::Rfc3339,
-    )
-    .ok()?;
+    let parsed =
+        time::OffsetDateTime::parse(stamp, &time::format_description::well_known::Rfc3339).ok()?;
     Some(parsed.unix_timestamp())
 }
 
@@ -441,7 +440,10 @@ mod tests {
 
         assert_eq!(ledger.crashes_since(&mut outbox), None);
         assert_eq!(ledger.bump(&mut outbox, now), (1, stamp_from_unix(now)));
-        assert_eq!(ledger.bump(&mut outbox, now + 60), (2, stamp_from_unix(now + 60)));
+        assert_eq!(
+            ledger.bump(&mut outbox, now + 60),
+            (2, stamp_from_unix(now + 60))
+        );
         assert_eq!(ledger.crashes_since(&mut outbox).unwrap().0, 2);
 
         // CE resets `ClientCrashesSince` once the window has passed (measured

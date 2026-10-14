@@ -226,8 +226,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("LUSTLESS_CRASH_REASON", ledger.reason_path());
     let previous_crash = ledger.begin();
     // CE's `crashatonce=true` command-line switch / `ForceCrashClient` setting.
-    if crash::forced_crash_requested(&std::env::args().collect::<Vec<_>>(), &cfg.daemon.crash_test_hook)
-    {
+    if crash::forced_crash_requested(
+        &std::env::args().collect::<Vec<_>>(),
+        &cfg.daemon.crash_test_hook,
+    ) {
         crash::force_crash();
     }
 
@@ -378,7 +380,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// start, bumps the telemetry counter, attaches the log groups and clears the
 /// counter. The attachments never include the activity databases
 /// (`91-linux-mapping.md` §10).
-fn report_previous_crash(state: &DaemonState, ledger: &crash::CrashLedger, crash_type: crash::CrashType) {
+fn report_previous_crash(
+    state: &DaemonState,
+    ledger: &crash::CrashLedger,
+    crash_type: crash::CrashType,
+) {
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let (count, crashes_at) = state.with_outbox(|outbox| ledger.bump(outbox, now));
 

@@ -16,6 +16,10 @@ BuildArch:      x86_64
 # openssl-libs, libayatana-appindicator-gtk3, polkit, dbus…); these manual
 # entries cover the non-ELF runtime deps.
 Requires:       ca-certificates python3
+# Wayland capture reaches PipeWire through a runtime dlopen of
+# libpipewire-0.3.so.0, so it is a weak dependency: present on any desktop, and
+# its absence degrades to the X11/XWayland path instead of failing to install.
+Recommends:     libpipewire-0.3.so.0()(64bit)
 
 %description
 Accountability client: on-device screen accountability (capture plus a local

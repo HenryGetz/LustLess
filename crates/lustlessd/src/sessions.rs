@@ -14,6 +14,7 @@
 //! `lustless_capture::scheduler::GateError` (§7).
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -35,8 +36,49 @@ const SESSION_IFACE: &str = "org.freedesktop.login1.Session";
 /// Re-read cadence for `Active`/`LockedHint` (safety net beside the signals).
 const REFRESH_TICK: Duration = Duration::from_secs(5);
 
-/// Gating state of one logind session.
+/// Kind of logind session, from the `Type` property (CONTRACTS §7/§13). Only
+/// `X11`/`Wayland` have a screen worth capturing; `Tty` (text console) and
+/// everything else (including logind's `mir`/`unspecified`) cannot be captured
+/// through either backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionKind {
+    /// X11 graphical session.
+    X11,
+    /// Wayland graphical session.
+    Wayland,
+    /// Text/VT session (no display server).
+    Tty,
+    /// Any other/unknown `Type` (`mir`, `unspecified`, missing property, …).
+    Unknown,
+}
+
+impl SessionKind {
+    /// Parses a logind `Type` value. Strict: only the exact strings `x11`,
+    /// `wayland` and `tty` are recognized.
+    pub fn parse(raw: &str) -> SessionKind {
+        match raw {
+            "x11" => SessionKind::X11,
+            "wayland" => SessionKind::Wayland,
+            "tty" => SessionKind::Tty,
+            _ => SessionKind::Unknown,
+        }
+    }
+
+    /// The value the capture backends expect as `XDG_SESSION_TYPE`
+    /// ([`lustless_capture::resolve_backend`]): `Some("x11")`/`Some("wayland")`
+    /// for graphical sessions, `None` for `Tty`/`Unknown` so the caller's
+    /// existing fallback applies.
+    pub fn as_session_type(self) -> Option<&'static str> {
+        match self {
+            SessionKind::X11 => Some("x11"),
+            SessionKind::Wayland => Some("wayland"),
+            SessionKind::Tty | SessionKind::Unknown => None,
+        }
+    }
+}
+
+/// Gating state of one logind session.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionEntry {
     /// Owning uid.
     pub uid: u32,
@@ -44,6 +86,143 @@ pub struct SessionEntry {
     pub active: bool,
     /// `!LockedHint` — the screen is unlocked.
     pub unlocked: bool,
+    /// logind `Type` — which display server the session runs.
+    pub kind: SessionKind,
+    /// logind `Display` (e.g. `:0`), empty for text sessions.
+    pub display: Option<String>,
+    /// logind `Remote` — a remote/SSH session must never be captured (§13).
+    pub remote: bool,
+}
+
+impl SessionEntry {
+    /// Whether this session may be captured at all: graphical and not remote
+    /// (§13 — a remote or text session has no local screen worth capturing,
+    /// and capturing one would be a privacy leak).
+    pub fn capturable(&self) -> bool {
+        !self.remote && self.kind != SessionKind::Tty
+    }
+
+    /// Why capture must be skipped, for the info log; `None` = capturable.
+    pub fn skip_reason(&self) -> Option<&'static str> {
+        if self.remote {
+            Some("remote session")
+        } else if self.kind == SessionKind::Tty {
+            Some("text session")
+        } else {
+            None
+        }
+    }
+}
+
+/// Everything a capture backend needs to reach a session that a root daemon
+/// does not itself run in. Derived from a [`SessionEntry`] plus the uid; see
+/// [`SessionEnv::apply`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionEnv {
+    /// Session bus/runtime owner.
+    pub uid: u32,
+    /// `/run/user/<uid>`.
+    pub runtime_dir: PathBuf,
+    /// `unix:path=/run/user/<uid>/bus` — the session D-Bus (xdg-desktop-portal).
+    pub bus_address: String,
+    /// logind `Display` (e.g. `:0`).
+    pub display: Option<String>,
+    /// First existing `XAUTHORITY` candidate, if any.
+    pub xauthority: Option<PathBuf>,
+    /// Session kind (drives backend selection).
+    pub kind: SessionKind,
+}
+
+impl SessionEnv {
+    /// Pure derivation from `(uid, entry, home)`. `home` is the session user's
+    /// home directory, or `None` when unknown; it is injected so tests can use
+    /// a fake root without a real `/etc/passwd` lookup.
+    pub fn derive(uid: u32, entry: &SessionEntry, home: Option<&Path>) -> SessionEnv {
+        let runtime_dir = PathBuf::from(format!("/run/user/{uid}"));
+        let bus_address = format!("unix:path={}/bus", runtime_dir.display());
+        let xauthority = probe_xauthority(&xauthority_candidates(uid, home));
+        SessionEnv {
+            uid,
+            runtime_dir,
+            bus_address,
+            display: entry.display.clone(),
+            xauthority,
+            kind: entry.kind,
+        }
+    }
+
+    /// Derives the environment using the real home directory of `uid`
+    /// ([`home_for`]).
+    pub fn resolve(uid: u32, entry: &SessionEntry) -> SessionEnv {
+        SessionEnv::derive(uid, entry, home_for(uid).as_deref())
+    }
+
+    /// Writes the session values into the process environment so the backends'
+    /// own libraries pick them up.
+    ///
+    /// (a) This is called once when a session is first resolved, and again only
+    /// when the resolved session changes (uid or kind); the caller tracks that.
+    /// (b) It is called from the capture task, not from arbitrary threads.
+    /// (c) The alternative — threading these values through every backend API —
+    /// is deliberately not taken because the X11 (`x11rb`) and portal
+    /// (xdg-desktop-portal over the session bus) libraries read `DISPLAY`,
+    /// `XAUTHORITY`, `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` from the
+    /// environment themselves.
+    ///
+    /// Caveat, honestly: `std::env::set_var` mutates process-global state and
+    /// is not thread-safe against concurrent `getenv` (which is why Rust 2024
+    /// marks it `unsafe`). It is acceptable here only because the daemon's
+    /// other threads do not read these variables and the capture task owns the
+    /// backend; it is a known sharp edge, not a clean design.
+    pub fn apply(&self) {
+        std::env::set_var("XDG_RUNTIME_DIR", &self.runtime_dir);
+        std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &self.bus_address);
+        match &self.display {
+            Some(display) => std::env::set_var("DISPLAY", display),
+            None => std::env::remove_var("DISPLAY"),
+        }
+        match &self.xauthority {
+            Some(path) => std::env::set_var("XAUTHORITY", path),
+            None => std::env::remove_var("XAUTHORITY"),
+        }
+        match self.kind {
+            SessionKind::X11 => std::env::set_var("XDG_SESSION_TYPE", "x11"),
+            SessionKind::Wayland => std::env::set_var("XDG_SESSION_TYPE", "wayland"),
+            SessionKind::Tty => std::env::set_var("XDG_SESSION_TYPE", "tty"),
+            SessionKind::Unknown => std::env::remove_var("XDG_SESSION_TYPE"),
+        }
+    }
+}
+
+/// Ordered `XAUTHORITY` candidates for a session; the first that exists wins.
+pub fn xauthority_candidates(uid: u32, home: Option<&Path>) -> Vec<PathBuf> {
+    let mut candidates = Vec::with_capacity(3);
+    candidates.push(PathBuf::from(format!("/run/user/{uid}/gdm/Xauthority")));
+    candidates.push(PathBuf::from(format!("/run/user/{uid}/Xauthority")));
+    if let Some(home) = home {
+        candidates.push(home.join(".Xauthority"));
+    }
+    candidates
+}
+
+/// First candidate that exists on disk; `None` when none do.
+fn probe_xauthority(candidates: &[PathBuf]) -> Option<PathBuf> {
+    candidates.iter().find(|path| path.exists()).cloned()
+}
+
+/// Home directory of `uid` from `/etc/passwd`. Deliberately dependency-free:
+/// local desktop sessions are in `/etc/passwd`; NSS/LDAP-provided homes are
+/// not resolved (they would need `getpwuid`/a new dependency).
+fn home_for(uid: u32) -> Option<PathBuf> {
+    let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
+    for line in passwd.lines() {
+        let fields: Vec<&str> = line.split(':').collect();
+        if fields.len() >= 6 && fields[2].parse::<u32>().ok() == Some(uid) && !fields[5].is_empty()
+        {
+            return Some(PathBuf::from(fields[5]));
+        }
+    }
+    None
 }
 
 /// Per-uid session registry (§13). Pure data structure: the capture gating
@@ -70,16 +249,58 @@ impl SessionRegistry {
         Self::default()
     }
 
-    /// Records (or refreshes) one session.
+    /// Records (or refreshes) one session. Keeps the legacy flag-only shape:
+    /// `Type`/`Display`/`Remote` default to `Unknown`/`None`/`false`.
+    ///
+    /// Test-only: production code always has the logind `Type`/`Display`/`Remote`
+    /// properties in hand and goes through [`Self::upsert_entry`].
+    #[cfg(test)]
     pub fn upsert(&self, path: &str, uid: u32, active: bool, unlocked: bool) {
-        wguard(&self.sessions).insert(
-            path.to_string(),
+        self.upsert_entry(
+            path,
             SessionEntry {
                 uid,
                 active,
                 unlocked,
+                kind: SessionKind::Unknown,
+                display: None,
+                remote: false,
             },
         );
+    }
+
+    /// Records (or refreshes) one complete session entry.
+    pub fn upsert_entry(&self, path: &str, entry: SessionEntry) {
+        wguard(&self.sessions).insert(path.to_string(), entry);
+    }
+
+    /// The session logind reports for `uid`, preferring an active+unlocked one.
+    /// Deterministic: ties are broken by session object path, since the
+    /// registry is a map. `None` when the uid has no tracked session.
+    pub fn session_for_uid(&self, uid: u32) -> Option<SessionEntry> {
+        fn rank(entry: &SessionEntry) -> u8 {
+            if entry.active && entry.unlocked {
+                0
+            } else if entry.active {
+                1
+            } else {
+                2
+            }
+        }
+        let sessions = rguard(&self.sessions);
+        let mut best: Option<(&str, &SessionEntry)> = None;
+        for (path, entry) in sessions.iter().filter(|(_, entry)| entry.uid == uid) {
+            let better = match best {
+                None => true,
+                Some((best_path, best_entry)) => {
+                    (rank(entry), path.as_str()) < (rank(best_entry), best_path)
+                }
+            };
+            if better {
+                best = Some((path.as_str(), entry));
+            }
+        }
+        best.map(|(_, entry)| entry.clone())
     }
 
     /// Updates the flags of a known session; unknown paths are ignored (the
@@ -299,6 +520,31 @@ fn spawn_session_watcher(
     });
 }
 
+/// logind `Type` → [`SessionKind`]; a missing property is `Unknown`.
+async fn read_kind(proxy: &Proxy<'_>) -> SessionKind {
+    match proxy.get_property::<String>("Type").await {
+        Ok(raw) => SessionKind::parse(&raw),
+        Err(err) => {
+            tracing::debug!("logind: session Type read failed: {err}");
+            SessionKind::Unknown
+        }
+    }
+}
+
+/// logind `Display` (`:0`, …); empty means "no display" → `None`.
+async fn read_display(proxy: &Proxy<'_>) -> Option<String> {
+    proxy
+        .get_property::<String>("Display")
+        .await
+        .ok()
+        .filter(|display| !display.is_empty())
+}
+
+/// logind `Remote`; a missing property is treated as local (`false`).
+async fn read_remote(proxy: &Proxy<'_>) -> bool {
+    proxy.get_property::<bool>("Remote").await.unwrap_or(false)
+}
+
 /// Per-session watcher: initial state, `Lock`/`Unlock` signals,
 /// `Active`/`LockedHint` property changes and a 5 s refresh.
 async fn watch_session(
@@ -334,10 +580,24 @@ async fn watch_session(
         .get_property::<bool>("LockedHint")
         .await
         .unwrap_or(true);
-    registry.upsert(&path, uid, active, unlocked);
+    let mut kind = read_kind(&proxy).await;
+    let mut session_display = read_display(&proxy).await;
+    let mut remote = read_remote(&proxy).await;
+    registry.upsert_entry(
+        &path,
+        SessionEntry {
+            uid,
+            active,
+            unlocked,
+            kind,
+            display: session_display.clone(),
+            remote,
+        },
+    );
     update_active_hint(&registry, &state);
     tracing::debug!(
-        "logind: watching session {path} (uid {uid}, active {active}, unlocked {unlocked})"
+        "logind: watching session {path} (uid {uid}, active {active}, unlocked {unlocked}, \
+         type {kind:?}, session_display {session_display:?}, remote {remote})"
     );
 
     let mut lock_stream = match proxy.receive_signal("Lock").await {
@@ -406,7 +666,23 @@ async fn watch_session(
                     (Ok(new_active), Ok(new_locked)) => {
                         active = new_active;
                         unlocked = !new_locked;
-                        registry.set_flags(&path, active, unlocked);
+                        // `Type`/`Display`/`Remote` rarely change mid-session,
+                        // but re-read them on the same cadence so a session
+                        // that turns graphical (or remote) is picked up.
+                        kind = read_kind(&proxy).await;
+                        session_display = read_display(&proxy).await;
+                        remote = read_remote(&proxy).await;
+                        registry.upsert_entry(
+                            &path,
+                            SessionEntry {
+                                uid,
+                                active,
+                                unlocked,
+                                kind,
+                                display: session_display.clone(),
+                                remote,
+                            },
+                        );
                     }
                     (Err(err), _) | (_, Err(err)) => {
                         tracing::warn!("logind: session {path} vanished: {err}");
@@ -528,5 +804,134 @@ mod tests {
             .build(&(42u32, "x"))
             .expect("msg c");
         assert!(parse_session_signal(&msg_c).is_none());
+    }
+
+    fn entry(uid: u32, active: bool, unlocked: bool, kind: SessionKind) -> SessionEntry {
+        SessionEntry {
+            uid,
+            active,
+            unlocked,
+            kind,
+            display: None,
+            remote: false,
+        }
+    }
+
+    #[test]
+    fn session_kind_parsing() {
+        assert_eq!(SessionKind::parse("x11"), SessionKind::X11);
+        assert_eq!(SessionKind::parse("wayland"), SessionKind::Wayland);
+        assert_eq!(SessionKind::parse("tty"), SessionKind::Tty);
+        assert_eq!(SessionKind::parse("mir"), SessionKind::Unknown);
+        assert_eq!(SessionKind::parse("unspecified"), SessionKind::Unknown);
+        assert_eq!(SessionKind::parse(""), SessionKind::Unknown);
+        assert_eq!(
+            SessionKind::parse("X11"),
+            SessionKind::Unknown,
+            "logind reports lowercase; anything else is Unknown"
+        );
+        assert_eq!(SessionKind::X11.as_session_type(), Some("x11"));
+        assert_eq!(SessionKind::Wayland.as_session_type(), Some("wayland"));
+        assert_eq!(SessionKind::Tty.as_session_type(), None);
+        assert_eq!(SessionKind::Unknown.as_session_type(), None);
+    }
+
+    #[test]
+    fn session_env_derivation() {
+        // A uid that has no `/run/user` entry and no `/etc/passwd` home.
+        let uid = 59_999;
+        let home = std::env::temp_dir().join(format!("lustless-sessionenv-{}", std::process::id()));
+        let mut session = entry(uid, true, true, SessionKind::X11);
+        session.display = Some(":0".to_string());
+
+        let env = SessionEnv::derive(uid, &session, Some(&home));
+        assert_eq!(env.uid, uid);
+        assert_eq!(env.runtime_dir, PathBuf::from("/run/user/59999"));
+        assert_eq!(env.bus_address, "unix:path=/run/user/59999/bus");
+        assert_eq!(env.display.as_deref(), Some(":0"));
+        assert_eq!(env.kind, SessionKind::X11);
+        assert_eq!(
+            env.xauthority, None,
+            "no candidate exists for this fake uid"
+        );
+    }
+
+    #[test]
+    fn xauthority_candidates_are_ordered() {
+        let home = PathBuf::from("/home/alice");
+        assert_eq!(
+            xauthority_candidates(1000, Some(&home)),
+            vec![
+                PathBuf::from("/run/user/1000/gdm/Xauthority"),
+                PathBuf::from("/run/user/1000/Xauthority"),
+                PathBuf::from("/home/alice/.Xauthority"),
+            ]
+        );
+        // Without a home the home candidate is omitted.
+        assert_eq!(
+            xauthority_candidates(1000, None),
+            vec![
+                PathBuf::from("/run/user/1000/gdm/Xauthority"),
+                PathBuf::from("/run/user/1000/Xauthority"),
+            ]
+        );
+    }
+
+    #[test]
+    fn xauthority_probe_picks_first_existing_candidate() {
+        let dir = std::env::temp_dir().join(format!("lustless-xauth-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("tmp dir");
+        let missing = dir.join("gdm/Xauthority"); // first candidate, absent
+        let existing = dir.join("Xauthority"); // second candidate, present
+        std::fs::write(&existing, b"cookie").expect("write xauthority");
+        let candidates = vec![missing, existing.clone(), dir.join("home/.Xauthority")];
+
+        assert_eq!(
+            probe_xauthority(&candidates),
+            Some(existing),
+            "the missing first candidate is skipped"
+        );
+        assert_eq!(
+            probe_xauthority(&[dir.join("nope/Xauthority")]),
+            None,
+            "nonexistent candidates are never returned"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tty_and_remote_sessions_are_not_capturable() {
+        let x11 = entry(1000, true, true, SessionKind::X11);
+        assert!(x11.capturable());
+        assert_eq!(x11.skip_reason(), None);
+
+        assert!(entry(1000, true, true, SessionKind::Wayland).capturable());
+
+        let tty = entry(1000, true, true, SessionKind::Tty);
+        assert!(!tty.capturable());
+        assert_eq!(tty.skip_reason(), Some("text session"));
+
+        // A remote session is never captured, even when graphical.
+        let mut remote = entry(1000, true, true, SessionKind::Wayland);
+        remote.remote = true;
+        assert!(!remote.capturable());
+        assert_eq!(remote.skip_reason(), Some("remote session"));
+
+        // Unknown falls through to the backend's own fallback.
+        assert!(entry(1000, true, true, SessionKind::Unknown).capturable());
+    }
+
+    #[test]
+    fn session_for_uid_prefers_active_unlocked() {
+        let registry = SessionRegistry::new();
+        registry.upsert_entry("s2", entry(1000, false, true, SessionKind::Tty));
+        let mut wayland = entry(1000, true, true, SessionKind::Wayland);
+        wayland.display = Some("wayland-0".to_string());
+        registry.upsert_entry("s1", wayland);
+
+        let picked = registry.session_for_uid(1000).expect("session");
+        assert_eq!(picked.kind, SessionKind::Wayland);
+        assert_eq!(picked.display.as_deref(), Some("wayland-0"));
+        assert_eq!(registry.session_for_uid(4242), None);
     }
 }

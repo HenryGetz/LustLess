@@ -470,7 +470,11 @@ impl SpoolWatcher {
             std::thread::sleep(timeout);
             let mut ready = self.scan_ready();
             ready.retain(|path| !before.contains(path));
-            let gone: Vec<PathBuf> = before.iter().filter(|path| !path.exists()).cloned().collect();
+            let gone: Vec<PathBuf> = before
+                .iter()
+                .filter(|path| !path.exists())
+                .cloned()
+                .collect();
             if !gone.is_empty() {
                 let live: HashMap<u64, PathBuf> = fs::read_dir(&self.root)
                     .into_iter()

@@ -1206,8 +1206,8 @@ impl Uploader {
                         }
                     }
                     SendOutcome::Rejected => {
-                        let _ = lock_outbox(&self.outbox)
-                            .delete_rows(EventTable::Telemetry, &ok_ids);
+                        let _ =
+                            lock_outbox(&self.outbox).delete_rows(EventTable::Telemetry, &ok_ids);
                     }
                     SendOutcome::Throttled => {
                         outcome.throttled = true;

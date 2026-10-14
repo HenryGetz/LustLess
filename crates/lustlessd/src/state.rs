@@ -388,12 +388,10 @@ impl DaemonState {
         self.active_session_uid().unwrap_or(ROOT_UID)
     }
 
-    /// Opens (and, on first use, creates with §4 modes) the uid's §6.2
-    /// settings DB: `<state_dir>/<uid>/settings.db` + `settings.key`.
-    pub fn settings_for(&self, uid: u32) -> Result<Arc<Mutex<SettingsDb>>, String> {
-        if let Some(existing) = guard(&self.settings).get(&uid) {
-            return Ok(Arc::clone(existing));
-        }
+    /// `<state_dir>/<uid>` — the per-uid state directory (§4). Created with
+    /// 0700 on first use, same as [`Self::settings_for`] does before opening
+    /// the settings DB.
+    pub fn uid_dir(&self, uid: u32) -> Result<PathBuf, String> {
         let dir = Path::new(&self.cfg_static.daemon.state_dir).join(uid.to_string());
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("settings dir {}: {e}", dir.display()))?;
@@ -402,6 +400,16 @@ impl DaemonState {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
         }
+        Ok(dir)
+    }
+
+    /// Opens (and, on first use, creates with §4 modes) the uid's §6.2
+    /// settings DB: `<state_dir>/<uid>/settings.db` + `settings.key`.
+    pub fn settings_for(&self, uid: u32) -> Result<Arc<Mutex<SettingsDb>>, String> {
+        if let Some(existing) = guard(&self.settings).get(&uid) {
+            return Ok(Arc::clone(existing));
+        }
+        let dir = self.uid_dir(uid)?;
         let db_path = dir.join("settings.db");
         let key_path = dir.join("settings.key");
         let db = SettingsDb::open(&db_path, &key_path).map_err(|e| e.to_string())?;

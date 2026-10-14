@@ -10,10 +10,14 @@
 #   packaging/build-binaries.sh musl       musl build in an alpine
 #                                          container (APK package only)
 #
-# Env: LUSTLESS_WAYLAND=1 — glibc only; include the Wayland portal backend
-# (needs pipewire 1.x headers; the 22.04 base carries 0.3.x so the default
-# glibc build ships --no-default-features and Wayland falls back to
-# XWayland/X11 root capture — CONTRACTS §2 and build-deb.sh history).
+# Env: LUSTLESS_WAYLAND — obsolete; the Wayland portal backend is part of every
+# glibc build now (v0.1.10). It is version-tolerant by construction: the
+# backend reaches PipeWire through our own dlopen'd bindings
+# (`crates/lustless-capture/src/pipewire_sys.rs`), so the build needs no
+# libpipewire headers and the binary links no libpipewire at all — the same
+# artifact runs against libpipewire 0.3.48 (Zorin 17 / Ubuntu 22.04) and 1.0.x
+# (Ubuntu 24.04, Fedora), and degrades to the X11/XWayland path when PipeWire
+# or the portal is absent (CONTRACTS §7, §13).
 #
 # Binaries land in target/release/ (shared; running with a different family
 # than the last build relinks — packaging consumes them immediately after a
@@ -53,8 +57,7 @@ apt-get install -y --no-install-recommends \
     build-essential curl ca-certificates pkg-config \
     libgtk-3-dev libayatana-appindicator3-dev \
     libssl-dev libsecret-1-dev \
-    libx11-dev libxext-dev libxrandr-dev \
-    libpipewire-0.3-dev libclang-dev
+    libx11-dev libxext-dev libxrandr-dev
 if [ ! -x "$CARGO_HOME/bin/rustup" ]; then
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --profile minimal --default-toolchain stable
@@ -63,20 +66,9 @@ fi
 "$CARGO_HOME/bin/rustup" default stable
 export PATH="$CARGO_HOME/bin:$PATH"
 rustc --version
-# Wayland portal capture stays OUT of the shipped binaries: the `pipewire`
-# crate's spa_sys bindings need a libspa newer than the Ubuntu 22.04 / Zorin 17
-# baseline provides (0.3.48) — it fails to build here, and a binary linked
-# against a newer libspa would not load on the target at all. The backend is
-# implemented (`crates/lustless-capture/src/wayland.rs`, `wayland-portal`
-# feature, builds with `LUSTLESS_WAYLAND=1` on a newer toolchain) and the
-# capture dispatcher logs the X11/XWayland fallback on Wayland sessions.
-# Closing this is a real work item (dlopen-style version-tolerant PipeWire
-# bindings, or a crate pin that matches 0.3.48) — see docs/impl/PARITY.md.
-if [ "${LUSTLESS_WAYLAND:-0}" = "1" ]; then
-    cargo build --release
-else
-    cargo build --release --no-default-features
-fi
+# Wayland portal capture is compiled in (see the header note): no pipewire
+# headers are needed because the backend dlopens libpipewire-0.3.so.0 itself.
+cargo build --release
 DOCKER_EOF
 else
 docker run --rm -i \
@@ -89,12 +81,15 @@ docker run --rm -i \
 set -eu
 apk add --no-cache build-base cargo rust sqlite-dev openssl-dev \
     pkgconfig gtk+3.0-dev libayatana-appindicator-dev libsecret-dev \
-    libx11-dev libxext-dev libxrandr-dev clang-dev tcl bash
+    libx11-dev libxext-dev libxrandr-dev tcl bash
 export PATH="$CARGO_HOME_HOST/bin:$PATH"
 rustc --version
 cargo --version
-# Same feature set as the glibc baseline (see the note above): no portal.
-cargo build --release --no-default-features
+# Same feature set as the glibc baseline: the portal backend is included (it
+# dlopens libpipewire, so no pipewire headers are needed here either — the
+# alpine VM in the testbed matrix is CLI-only, but the APK also targets Alpine
+# desktops).
+cargo build --release
 DOCKER_EOF
 fi
 

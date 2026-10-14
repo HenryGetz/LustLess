@@ -23,10 +23,13 @@ x11rb = { version = "0.13.2", features = ["randr", "shm"] }
 libc = "0.2.190"
 
 # Wayland backend (optional): XDG desktop-portal ScreenCast + PipeWire stream
-# consumption. Requires pipewire 1.x-era headers (pipewire-rs 0.10); disabled in
-# the glibc-2.35 release build where the base ships pipewire 0.3.x.
+# consumption. `ashpd` talks to the portal over D-Bus; PipeWire itself is
+# reached through our own dlopen'd bindings (`pipewire_sys.rs`), so this needs
+# no libpipewire headers at build time and links no libpipewire — one artifact
+# works against libpipewire 0.3.48 (Zorin 17 / Ubuntu 22.04) and 1.0.x
+# (Ubuntu 24.04, Fedora), and degrades to the X11/XWayland path when PipeWire
+# or the portal is missing (CONTRACTS §7, §13).
 ashpd = { version = "0.13.13", features = ["screencast"], optional = true }
-pipewire = { version = "0.10.1", optional = true }
 
 # Scheduler gates: logind LockedHint/Active + screensaver state over D-Bus.
 zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
@@ -40,7 +43,7 @@ parking_lot = "0.12.5"
 
 [features]
 default = ["wayland-portal"]
-wayland-portal = ["dep:ashpd", "dep:pipewire"]
+wayland-portal = ["dep:ashpd"]
 
 [dev-dependencies]
 tempfile = "3.27.0"

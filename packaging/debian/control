@@ -6,7 +6,7 @@ Architecture: amd64
 Icon: /usr/share/pixmaps/lustless.png
 Maintainer: LustLess Maintainers <maintainers@lustless.invalid>
 Depends: libssl3, libgtk-3-0, libayatana-appindicator3-1, systemd, polkitd, dbus, ca-certificates
-Recommends: xfce4-indicator-plugin
+Recommends: xfce4-indicator-plugin, libpipewire-0.3-0
 Suggests: gnome-shell-extension-appindicator
 Description: Accountability client: screen accountability + DNS filtering (Linux edition)
  Clean-room Linux reimplementation of the Covenant Eyes "Victory Shield" 10.1.44

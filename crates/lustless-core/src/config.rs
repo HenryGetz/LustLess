@@ -288,7 +288,10 @@ impl LustlessConfig {
             ));
         }
         let listen: std::net::SocketAddr = self.dns.listen.parse().map_err(|err| {
-            format!("dns.listen {:?} is not an address:port ({err})", self.dns.listen)
+            format!(
+                "dns.listen {:?} is not an address:port ({err})",
+                self.dns.listen
+            )
         })?;
         if listen.port() == 0 {
             return Err("dns.listen port must not be 0".to_string());
@@ -317,9 +320,10 @@ impl LustlessConfig {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Self::default(),
             Err(err) => {
                 tracing::error!("config read failed: {err}");
-                let mut config = Self::default();
-                config.load_error = Some(format!("config read failed: {err}"));
-                return config;
+                return Self {
+                    load_error: Some(format!("config read failed: {err}")),
+                    ..Self::default()
+                };
             }
         };
         let (mut config, warnings) = Self::parse_document(&text);

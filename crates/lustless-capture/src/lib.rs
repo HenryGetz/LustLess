@@ -11,6 +11,8 @@
 //!   lock/screensaver/classifier-alive gates (logind `LockedHint`/`Active` via `zbus`).
 
 pub mod manifest;
+pub mod pipewire_pod;
+pub mod pipewire_sys;
 pub mod scheduler;
 pub mod spool;
 #[cfg(feature = "wayland-portal")]

@@ -8,7 +8,8 @@
 //!    classifier alive (CE's `isClassifierRunning`), logind unlocked+active
 //!    (`sessions.rs` registry), screensaver inactive (§7; skip entirely),
 //! 2. backend select ([`lustless_capture::resolve_backend`]: `auto` = X11 when
-//!    `XDG_SESSION_TYPE=x11`, else Wayland),
+//!    the *session's* logind `Type` is x11, else Wayland — the daemon's own
+//!    environment says nothing about the user's session),
 //! 3. capture → §6.3 transaction (`im<N>.png` + `manifest.json` + atomic
 //!    `ready`),
 //! 4. bookkeeping — `client_screenshot` metric, `circumventions` rows for
@@ -33,7 +34,7 @@ use lustless_core::clock::local_timezone_offset;
 use lustless_core::ids;
 use lustless_core::metrics::MetricName;
 
-use crate::sessions::SessionRegistry;
+use crate::sessions::{SessionEnv, SessionRegistry};
 use crate::state::{wait_or_shutdown, CreatedTxn, DaemonState};
 
 /// How often the daemon sweeps the spool for orphans.
@@ -77,6 +78,8 @@ pub async fn run(
     let mut backend: Option<Box<dyn CaptureBackend>> = None;
     let mut watcher: Option<SpoolWatcher> = None;
     let mut watcher_key: Option<String> = None;
+    // Last session environment applied to this process (see `SessionEnv::apply`).
+    let mut session_env: Option<SessionEnv> = None;
 
     loop {
         if *shutdown.borrow() {
@@ -89,6 +92,7 @@ pub async fn run(
             &mut backend,
             &mut watcher,
             &mut watcher_key,
+            &mut session_env,
         )
         .await;
         if wait_or_shutdown(&mut shutdown, delay).await {
@@ -106,6 +110,7 @@ async fn tick(
     backend: &mut Option<Box<dyn CaptureBackend>>,
     watcher: &mut Option<SpoolWatcher>,
     watcher_key: &mut Option<String>,
+    session_env: &mut Option<SessionEnv>,
 ) -> Duration {
     let cfg = state.config();
 
@@ -198,7 +203,51 @@ async fn tick(
         }
     }
 
-    // Backend select (§7: `auto` = X11 when XDG_SESSION_TYPE=x11).
+    // §13: never capture a remote/SSH or text session — there is no local
+    // screen worth capturing and capturing one would be a privacy leak.
+    let session = registry.session_for_uid(uid);
+    if let Some(session) = session.as_ref() {
+        if !session.capturable() {
+            state.set_capture_active(false);
+            let reason = session.skip_reason().unwrap_or("non-capturable session");
+            tracing::info!("Skip capturing Screenstate ({reason})");
+            return GATE_RETRY;
+        }
+
+        // Point the daemon's process at the *session's* environment (DISPLAY,
+        // XAUTHORITY, XDG_RUNTIME_DIR, session bus) before any backend reads
+        // it. Applied once when a session is first resolved and again only when
+        // the resolved session changes; a changed session invalidates the
+        // cached backend, which was opened against the old environment.
+        let env = SessionEnv::resolve(uid, session);
+        if session_env.as_ref() != Some(&env) {
+            env.apply();
+            if session_env.is_some() {
+                *backend = None;
+            }
+            tracing::info!(
+                "capture: session env applied (uid {}, type {:?}, display {:?})",
+                env.uid,
+                env.kind,
+                env.display
+            );
+            *session_env = Some(env);
+        }
+    } else if registry.bus_ok() {
+        // The gate above allowed this tick, so logind knows an active+unlocked
+        // session exists; a missing entry means it vanished mid-tick.
+        state.set_capture_active(false);
+        tracing::info!("Skip capturing Screenstate (session vanished)");
+        return GATE_RETRY;
+    } else {
+        // logind is unreachable: fail open (§7) with the daemon's own
+        // environment, exactly as before session discovery existed.
+        tracing::debug!("capture: logind unavailable; session environment unknown");
+    }
+
+    // Backend select (§7: `auto` = X11 when the session's display server is
+    // X11, else Wayland — the daemon's own environment says nothing about the
+    // user's session).
     if backend.is_none() {
         let choice = match BackendChoice::parse(&cfg.capture.backend) {
             Ok(choice) => choice,
@@ -207,12 +256,20 @@ async fn tick(
                 return GATE_RETRY;
             }
         };
-        let session_type = std::env::var("XDG_SESSION_TYPE").ok();
-        match x11::open(choice, session_type.as_deref()) {
+        let session_type = session.as_ref().and_then(|s| s.kind.as_session_type());
+        // The portal grant is per user: keep the ScreenCast restore token beside
+        // that user's other state so the compositor does not re-prompt on every
+        // login (the dialog is the difference between a quiet background agent
+        // and one that nags the person it is accountable to).
+        let portal_token = state
+            .uid_dir(uid)
+            .ok()
+            .map(|dir| dir.join("portal-restore-token"));
+        match x11::open(choice, session_type, portal_token) {
             Ok(opened) => {
                 tracing::info!(
                     "capture: backend selected ({:?})",
-                    lustless_capture::resolve_backend(choice, session_type.as_deref())
+                    lustless_capture::resolve_backend(choice, session_type)
                 );
                 *backend = Some(opened);
             }
