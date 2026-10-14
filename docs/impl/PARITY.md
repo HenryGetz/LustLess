@@ -12,7 +12,7 @@ documented deviation, **✗** gap (work named).
 
 | # | Subsystem | Status | Evidence (code / test / run) |
 |---|---|---|---|
-| 1 | Screen capture + screenstate pipeline | ✓* | **Both** backends ship (v0.1.10): X11 MIT-SHM and the Wayland portal + PipeWire backend. The PipeWire side runs on our own version-tolerant bindings (`capture/src/pipewire_sys.rs`, dlopen — no link dependency, no libpipewire headers at build time) with our own SPA pod codec (`capture/src/pipewire_pod.rs`); all 24 pod constants print identically on 22.04 and 24.04, all 25 dlsym'd symbols resolve against the real 1.0.5 library (`load_resolves_the_system_library_when_pipewire_is_installed`), the release build needs neither `libpipewire-0.3-dev` nor `libclang-dev`, and no shipped binary carries a `libpipewire`/`libspa` `DT_NEEDED`. The FFI contract is exercised end to end against a stub `libpipewire-0.3.so.0` built from the real headers (`tests/pipewire_sys_fake.rs`: registry vtable, `restricted` via the real `spa_dict`, format-pod negotiation, padded-stride frame extraction, buffer queueing). *Deviation*: the portal grant + real frame extraction have not yet been observed against a live compositor — see gap 0. Both backends share the verified file-transaction handoff, ready marker, jittered cadence and the CE retry ladder (`capture/src/{spool,manifest,scheduler}.rs`, tests `jitter_stays_within_uniform_bounds`, `retry_ladder_matches_ce_table`); tamper rows for removed/renamed transactions ✓ |
+| 1 | Screen capture + screenstate pipeline | ✓* | **Both** backends ship (v0.1.10): X11 MIT-SHM and the Wayland portal + PipeWire backend. The PipeWire side runs on our own version-tolerant bindings (`capture/src/pipewire_sys.rs`, dlopen — no link dependency, no libpipewire headers at build time) with our own SPA pod codec (`capture/src/pipewire_pod.rs`); all 24 pod constants print identically on 22.04 and 24.04, all 25 dlsym'd symbols resolve against the real 1.0.5 library (`load_resolves_the_system_library_when_pipewire_is_installed`), the release build needs neither `libpipewire-0.3-dev` nor `libclang-dev`, and no shipped binary carries a `libpipewire`/`libspa` `DT_NEEDED`. The FFI contract is exercised end to end against a stub `libpipewire-0.3.so.0` built from the real headers (`tests/pipewire_sys_fake.rs`: registry vtable, `restricted` via the real `spa_dict`, format-pod negotiation, padded-stride frame extraction, buffer queueing). *Deviation*: **no capture has ever been observed end-to-end**, on either backend — the portal grant is unverified (gap 0) and the one live run never cleared the daemon's logind session gate (gap 1). Both backends share the verified file-transaction handoff, ready marker, jittered cadence and the CE retry ladder (`capture/src/{spool,manifest,scheduler}.rs`, tests `jitter_stays_within_uniform_bounds`, `retry_ladder_matches_ce_table`); tamper rows for removed/renamed transactions ✓ |
 | 2 | Classifier (on-device ML) | ✓ | Real CE bundle decrypts, loads and **scores** — verified end to end on a synthetic 640×480 transaction: `{"app":"firefox","score":0.0,"flagged":false,"scored_windows":1}` with `threshold 0.467` from the calibration artifact and all six artifacts (`b1/b2/b3-scorer`, `sw-labels`, `mn`) loaded; `doNotScore` windows skipped (`classifier/src/consumer.rs`) |
 | 3 | DNS/URL filtering | ✓* | Forwarder on 127.0.0.2 with dual resolution, RPZ-style synthetic blocks, block page, browser DoH-lockdown policies; *deviation*: shipped upstream is a CleanBrowsing-family endpoint (open item 5 — redistribution terms) |
 | 4 | Local IPC + dashboard | ✓* | Unix socket + `SO_PEERCRED` replaces CE's unauthenticated TCP 48867; the 1-byte code + payload vocabulary is kept; token-authenticated dashboard (401 anonymous, verified) |
@@ -26,8 +26,9 @@ documented deviation, **✗** gap (work named).
 
 ## Remaining gaps, ranked
 
-0. **Live portal-grant verification is the one step left on Wayland capture.**
-   The *shipping* half is closed (v0.1.10): the backend is in every build, the
+0. **The portal grant is unverified on real hardware.** Even once gap 1 is
+   cleared, this remains. The *shipping* half is closed (v0.1.10): the backend is
+   in every build, the
    `pipewire` crate is gone in favour of our own dlopen'd bindings, the build
    needs no pipewire headers and links no libpipewire, and the FFI contract is
    proven against a stub library built from the real 0.3.48 headers plus the
@@ -43,7 +44,20 @@ documented deviation, **✗** gap (work named).
    `TEST-MATRIX.md` (the daemon resolving the *session's* kind, the classifier
    loading all six CE artifacts, the logind `Display` gap that the X11 path hit
    first).
-1. ~~Crash-reporting pipeline~~ — **closed in v0.1.8** (`crates/lustlessd/src/crash.rs`
+1. **Screen capture has never produced a screenstate on a real desktop.** In the
+   one live installation that reached a running daemon with a signed-in policy and
+   a ready classifier (Ubuntu 24.04, 0.1.10), every tick logged
+   `Skip capturing Screenstate (session inactive)` while `loginctl` reported the
+   session `Active=yes`. The daemon's own registry (`sessions.rs::gate`) returns
+   `SessionInactive` when it holds no *active* entry for the uid, so either its
+   per-session property reads did not populate `active`/`uid` as expected or it
+   never learned about the session at all; the separate `session_gate` in
+   `scheduler.rs` has the same failure shape. This was **not** introduced by
+   v0.1.10 (the gate is older), but v0.1.10's session-environment work touches
+   exactly that watcher, so it needs re-checking with the fix. Until it is fixed,
+   screen accountability does nothing on a real machine — this is the most
+   important open item in this file, ahead of gap 0.
+2. ~~Crash-reporting pipeline~~ — **closed in v0.1.8** (`crates/lustlessd/src/crash.rs`
    with its nine tests, verified end to end: forced SIGABRT → `last-reason=SIGNAL`
    → next start reports `client_crash{crash_type=SIGNAL,count=1}`, the
    `client_crashes=SIGNAL:1` telemetry row, attachments with no database content,
@@ -51,24 +65,24 @@ documented deviation, **✗** gap (work named).
    upload channel as a *file*: the recovered protocol has no attachment route
    (CE used BugSplat), so the bundle stays local and is reported by
    `lustlessctl collect-debug`.
-2. **Upload auth recovery.** A rotated/expired device token stalls uploads
+3. **Upload auth recovery.** A rotated/expired device token stalls uploads
    (`crates/lustless-net/src/uploader.rs` drops the cached token on 401 with
    no re-auth path) although the device key/secret are stored
    (`lustless-core/src/settings.rs`) and `/v1/auth/signin` is implemented.
-3. **`disable_silent_upgrade` grace flag has no producer** — the updater reads
+4. **`disable_silent_upgrade` grace flag has no producer** — the updater reads
    `SILENT_UPGRADE_GRACE_FILE` (`crates/lustless-net/src/updater.rs`) but
    nothing writes it, so an admin who sets the flag suppresses critical
    updates indefinitely instead of for the CE-documented day.
-4. **`org.lustless.disable-protection` has no consumer** — the polkit action
+5. **`org.lustless.disable-protection` has no consumer** — the polkit action
    ships in `packaging/polkit/org.lustless.policy` but only break-glass is
    wired (`crates/lustlessd/src/ipc.rs`), so the documented tamper/uninstall
    action cannot actually be invoked.
-5. **Crash test hooks** (`crashatonce`, `ForceCrash*`) absent — CE's support
+6. **Crash test hooks** (`crashatonce`, `ForceCrash*`) absent — CE's support
    affordance for verifying crash handling.
-6. **Screensaver gate** is skipped when the session bus is unavailable (the
+7. **Screensaver gate** is skipped when the session bus is unavailable (the
    daemon runs as a system service); the logind *lock* signal is the gate that
    does apply.
-7. **Open policy items** (not code): the shipped DoH endpoint's redistribution
+8. **Open policy items** (not code): the shipped DoH endpoint's redistribution
    terms (item 5) and Wayland portal permission persistence on GNOME (item 3,
    now that the backend ships — needs a live GNOME/Wayland session).
 

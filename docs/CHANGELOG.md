@@ -52,13 +52,18 @@ could be correct on both 0.3.48 and 1.0.x — and one `.deb` has to cover both.
   `sessions.rs` reads the session's `Type`/`Display`/`Remote`/`Leader` and
   derives the environment (`DISPLAY`, `XAUTHORITY`, `XDG_RUNTIME_DIR`,
   `DBUS_SESSION_BUS_ADDRESS`); text and remote sessions are never captured.
-- **X11 capture actually works now.** A live run showed the daemon resolving the
+- **X11 capture can connect now.** A live run showed the daemon resolving the
   session correctly and then failing with `$DISPLAY variable not set`, because
   logind's per-session `Display` property is empty on real machines (verified on
   Ubuntu 24.04 and Zorin 17.3). DISPLAY/XAUTHORITY are recovered from the
   session leader's `/proc/<pid>/environ`, then from a bounded walk of its
   descendants, then from the ordered `XAUTHORITY` file probe — and only then
   does an X11 session fall back to `:0`.
+  *Not fixed by this*: in the same live run the daemon never got past its logind
+  gate (`Skip capturing Screenstate (session inactive)` on every tick) even
+  though `loginctl` reported `Active=yes` for that session — so **no screenstate
+  has ever been observed to be captured on a real desktop**, on either backend.
+  See gap 0 in `docs/impl/PARITY.md`.
 
 Verification: 350 workspace tests pass and `clippy -D warnings` is clean; the
 FFI layer is covered by an integration test that compiles a stub
