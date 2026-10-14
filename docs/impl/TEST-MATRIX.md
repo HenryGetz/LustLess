@@ -98,6 +98,28 @@ actually launching the window in a real desktop session (its two halves are
 verified separately: `enable --now` succeeding on Zorin Lite, and a plain
 agent start mapping the window in four distros).
 
+### Zorin OS 17.3 Lite (Xfce) — live VM, v0.1.6
+
+Real VM (`qemux/qemu`, Zorin-OS-17.3-Lite-64-bit-r2.iso), package delivered on
+a mounted ISO and installed with `apt-get install ./lustless_0.1.6_amd64.deb`:
+
+| Check | Evidence |
+|---|---|
+| install | `0 upgraded, 1 newly installed` — every dependency already present, no downloads; `lustless: detected resolver stack: resolved`; `Created symlink …/multi-user.target.wants/lustlessd.service`; desktop-file-utils + hicolor-icon-theme triggers ran |
+| flavor hint | the Xfce/Zorin-Lite SNI-host sentence printed by postinst |
+| **sign-in window** | opened by itself when the agent started: CE shield artwork, “LustLess”, “Accountability — sign in to continue”, Username/Password, Cancel/Sign in (`target/testbed/zorin-lite-signin-window.png`) |
+| **tray icon** | CE shield in the Xfce notification area, next to network/sound/battery (visible in both screenshots) |
+| **menu entry** | Zorin (Whisker) menu search “lustless” → entry with the CE shield icon (`target/testbed/zorin-lite-menu-entry.png`) |
+| dashboard | page head carries the shield as favicon and as the header logo (`rel="icon" … data:image/png;base64`, 2 embedded marks); screenshot not captured (the daemon binds the dashboard to loopback, which a published container port cannot reach) |
+
+Driving note for future sessions: this VM's noVNC console is view-only and
+QEMU-monitor `sendkey`/`mouse_button` events are not delivered to the guest
+(hotplugging a USB keyboard/tablet did not change that). Input works through
+the **raw VNC** port (5900, reachable from a container sharing the VM's
+network namespace) — `target/testbed/rfb-input.py` sends keysyms and absolute
+pointer events; keysym layout matters (`down-flag` is byte 2 of `KeyEvent`,
+2 bytes of padding follow) and shifted characters need a real Shift press.
+
 ## Install/upgrade path (v0.1.2+)
 
 Container runs (ubuntu:24.04, plain `bash`, no GitHub credentials — the

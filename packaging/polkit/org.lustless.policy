@@ -15,6 +15,7 @@
   -->
 
   <action id="org.lustless.break-glass">
+    <icon_name>lustless</icon_name>
     <description>Temporarily override LustLess web filtering (break-glass)</description>
     <message>Administrator authentication is required to temporarily override LustLess web filtering. Every use is audited in the system journal: journald unit "lustlessd.service", entry tagged "org.lustless.break-glass".</message>
     <defaults>
@@ -26,6 +27,7 @@
   </action>
 
   <action id="org.lustless.disable-protection">
+    <icon_name>lustless</icon_name>
     <description>Disable LustLess protection (audited tamper/uninstall action)</description>
     <message>Administrator authentication is required to disable LustLess protection. This is the single documented tamper/uninstall action (CONTRACTS §11); every use is audited in the system journal: journald unit "lustlessd.service", entry tagged "org.lustless.disable-protection".</message>
     <defaults>

@@ -113,6 +113,11 @@ install -D -m 0644 "$repo_root/packaging/etc/lustless.toml" \
 install -D -m 0644 "$repo_root/packaging/assets/lustless-256.png" \
     "$dest/usr/share/pixmaps/lustless.png"
 
+# The CE shield mark at its native 88x94 (the sign-in dialog header, matching
+# the dashboard's logo) — the same artwork, not a scaled icon.
+install -D -m 0644 "$repo_root/packaging/assets/lustless-mark.png" \
+    "$dest/usr/share/lustless/lustless-mark.png"
+
 # The CE shield at every size the desktop asks for (menus 16/24, panels and
 # window decorations 32/48, launchers and About dialogs 256) so the icon in
 # the application menu, the taskbar and the sign-in window is the same mark

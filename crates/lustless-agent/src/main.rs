@@ -623,6 +623,35 @@ fn credentials_dialog() -> Option<(String, String)> {
 
     let content = dialog.content_area();
     content.set_spacing(8);
+
+    // Header: the CE shield plus the product name, so the login window looks
+    // like the client it reimplements rather than a bare GTK form. The mark is
+    // shipped by the package (`/usr/share/lustless/lustless-mark.png`, the
+    // real artwork extracted from the Windows build); if it is missing the
+    // dialog simply renders without it.
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    header.set_margin_top(6);
+    header.set_margin_start(6);
+    header.set_margin_end(6);
+    let mark_path = std::path::Path::new("/usr/share/lustless/lustless-mark.png");
+    if mark_path.exists() {
+        let mark = gtk::Image::from_file(mark_path);
+        // Native artwork is 88x94; 56 keeps the header tidy beside the text.
+        mark.set_pixel_size(56);
+        mark.set_valign(gtk::Align::Center);
+        header.pack_start(&mark, false, false, 0);
+    }
+    let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    let name = gtk::Label::new(None);
+    name.set_markup("<span size=\"large\" weight=\"bold\">LustLess</span>");
+    name.set_xalign(0.0);
+    let subtitle = gtk::Label::new(Some("Accountability — sign in to continue"));
+    subtitle.set_xalign(0.0);
+    titles.pack_start(&name, false, false, 0);
+    titles.pack_start(&subtitle, false, false, 0);
+    header.pack_start(&titles, true, true, 0);
+    content.pack_start(&header, false, false, 0);
+
     let grid = gtk::Grid::new();
     grid.set_row_spacing(4);
     grid.set_column_spacing(8);

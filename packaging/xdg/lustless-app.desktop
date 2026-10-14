@@ -10,3 +10,4 @@ Categories=Network;
 StartupNotify=true
 X-GNOME-UsesNotifications=true
 Keywords=accountability;filter;lustless;covenant;
+StartupWMClass=lustless-agent
