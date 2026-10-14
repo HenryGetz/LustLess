@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build lustless-0.1.8-1.x86_64.rpm (Fedora Workstation, Bazzite rpm-ostree;
+# Build lustless-0.1.9-1.x86_64.rpm (Fedora Workstation, Bazzite rpm-ostree;
 # PACKAGING-MATRIX §2).
 #
 #   packaging/build-rpm.sh               full build: compile against the glibc
@@ -11,10 +11,10 @@
 #                                        target/release/ (must be glibc
 #                                        2.35-compatible; repackage only)
 #
-# Output: ./lustless-0.1.8-1.x86_64.rpm
+# Output: ./lustless-0.1.9-1.x86_64.rpm
 set -euo pipefail
 
-VERSION="0.1.8"
+VERSION="0.1.9"
 RELEASE="1"
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"

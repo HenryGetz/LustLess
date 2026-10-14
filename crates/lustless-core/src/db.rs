@@ -567,6 +567,23 @@ impl Outbox {
         Ok(self.conn.execute(&sql, params_from_iter(ids.iter()))?)
     }
 
+    /// Deletes rows by id regardless of content — the §10 uploader's
+    /// deterministic-4xx path. `drop_invalid` only removes rows that are
+    /// *locally* known to be unusable, so using it for a server rejection
+    /// matched nothing and left the batch to be re-claimed forever.
+    pub fn delete_rows(&mut self, table: EventTable, ids: &[i64]) -> Result<usize, CoreError> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "DELETE FROM {} WHERE id IN ({})",
+            table.as_str(),
+            placeholders
+        );
+        Ok(self.conn.execute(&sql, params_from_iter(ids.iter()))?)
+    }
+
     /// The dashboard read-back query of §8 — `ViewDnsActivityHandler`:
     /// `SELECT domain,process_id,process_name,ip,resolution_type,
     /// connection_type,resolution_datacenter,resolution_time_ms,

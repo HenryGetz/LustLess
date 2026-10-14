@@ -474,6 +474,12 @@ impl Updater {
                     .notify("error", "update install task failed", None);
             }
         }
+        // The staged payload is consumed either way: leaving it behind grows
+        // the staging dir without bound and leaves a partial file after a
+        // crash.
+        if let Err(err) = std::fs::remove_file(&path) {
+            warn!("removing the staged update failed: {err}");
+        }
     }
 }
 
@@ -644,12 +650,17 @@ mod tests {
         runtime().block_on(updater.check(&key));
         let paths = harness.installer.paths();
         assert_eq!(paths.len(), 1, "verified critical update applied");
-        // The staged file carries the exact payload bytes.
-        let staged = std::fs::read(&paths[0]).unwrap();
-        assert_eq!(staged, PAYLOAD);
+        // The installer was handed the right file name …
         assert!(paths[0]
             .to_string_lossy()
             .ends_with("lustless_0.2.0_amd64.deb"));
+        // … and the staged payload is cleaned up afterwards: leaving it behind
+        // grew the staging dir without bound (and left partial files after a
+        // crash).
+        assert!(
+            !paths[0].exists(),
+            "the staged update must be removed once applied"
+        );
     }
 
     #[test]

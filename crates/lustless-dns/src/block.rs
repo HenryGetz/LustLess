@@ -80,8 +80,12 @@ pub fn synthesize_block_answer(upstream: &[u8], block_host: &Name) -> Result<Vec
     out.set_response_code(ResponseCode::NoError);
     out.add_query(question.clone());
 
+    // The CNAME's owner is the *queried* name (RFC 1034 §3.6.2): a stub
+    // resolver validates the chain from the question name, so owning it by
+    // `block_host` made every blocked lookup NODATA instead of reaching the
+    // block page.
     out.add_answer(Record::from_rdata(
-        block_host.clone(),
+        question.name().clone(),
         BLOCK_TTL,
         RData::CNAME(CNAME(block_host.clone())),
     ));

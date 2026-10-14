@@ -32,6 +32,11 @@ pub struct LustlessConfig {
     pub upload: UploadConfig,
     /// `[update]` — signed update feed.
     pub update: UpdateConfig,
+    /// Set by [`LustlessConfig::load`] when the document could not be read or
+    /// parsed, so [`LustlessConfig::validate`] can refuse to run on
+    /// silently-defaulted settings instead of filtering nothing.
+    #[serde(skip)]
+    pub load_error: Option<String>,
 }
 
 /// `[daemon]` section (§9.1).
@@ -271,6 +276,35 @@ const KNOWN_SECTIONS: &[(&str, &[&str])] = &[
 ];
 
 impl LustlessConfig {
+    /// Value validation for the settings whose failure mode is *silent*: port
+    /// 0 binds an ephemeral port while `/etc/resolv.conf` still points at :53
+    /// (filtering silently off), and an unparsable `dns.listen` makes the
+    /// forwarder refuse to start. The daemon calls this at startup; a
+    /// violation is fatal and loud rather than a quietly defaulted config.
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(err) = &self.load_error {
+            return Err(format!(
+                "{err} — refusing to start with defaulted settings (fix the file and restart)"
+            ));
+        }
+        let listen: std::net::SocketAddr = self.dns.listen.parse().map_err(|err| {
+            format!("dns.listen {:?} is not an address:port ({err})", self.dns.listen)
+        })?;
+        if listen.port() == 0 {
+            return Err("dns.listen port must not be 0".to_string());
+        }
+        if self.daemon.dashboard_enabled && self.daemon.dashboard_port == 0 {
+            return Err("daemon.dashboard_port must not be 0".to_string());
+        }
+        if self.daemon.socket_path.trim().is_empty() {
+            return Err("daemon.socket_path must not be empty".to_string());
+        }
+        if self.daemon.state_dir.trim().is_empty() {
+            return Err("daemon.state_dir must not be empty".to_string());
+        }
+        Ok(())
+    }
+
     /// Loads `/etc/lustless/lustless.toml` (§9.1) — never fails:
     ///
     /// * missing file → the documented defaults (fresh install);
@@ -282,13 +316,22 @@ impl LustlessConfig {
             Ok(text) => text,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Self::default(),
             Err(err) => {
-                tracing::warn!("config read failed: {err}");
-                return Self::default();
+                tracing::error!("config read failed: {err}");
+                let mut config = Self::default();
+                config.load_error = Some(format!("config read failed: {err}"));
+                return config;
             }
         };
-        let (config, warnings) = Self::parse_document(&text);
+        let (mut config, warnings) = Self::parse_document(&text);
         for warning in warnings {
-            tracing::warn!("{warning}");
+            // A parse failure is fatal at startup (validate()); unknown keys are
+            // not — they are only warned about and ignored.
+            if warning.starts_with("config parse failed") {
+                tracing::error!("{warning}");
+                config.load_error = Some(warning);
+            } else {
+                tracing::warn!("{warning}");
+            }
         }
         config
     }
@@ -512,9 +555,46 @@ host_allowlist = ["packages.lustless.invalid"]
         std::fs::write(&good, SAMPLE).expect("write sample");
         assert_eq!(LustlessConfig::load(&good), LustlessConfig::default());
 
-        // Broken file → defaults (§9.1 parse-failure fallback).
+        // Broken file → defaults *plus* a recorded load error: the daemon must
+        // refuse to run on silently-defaulted settings (a filter that starts
+        // unfiltered because of a typo is the worst failure mode).
         let broken = dir.path().join("broken.toml");
         std::fs::write(&broken, "dns = [").expect("write broken");
-        assert_eq!(LustlessConfig::load(&broken), LustlessConfig::default());
+        let loaded = LustlessConfig::load(&broken);
+        assert_eq!(
+            loaded.dns.listen,
+            LustlessConfig::default().dns.listen,
+            "the sections still fall back to defaults"
+        );
+        assert!(loaded.load_error.is_some(), "the parse failure is recorded");
+        assert!(
+            loaded.validate().is_err(),
+            "and validation refuses to start on it"
+        );
+        assert!(
+            LustlessConfig::default().validate().is_ok(),
+            "a clean config validates"
+        );
+    }
+
+    #[test]
+    fn validation_rejects_the_values_that_silently_disable_filtering() {
+        let mut cfg = LustlessConfig::default();
+        assert!(cfg.validate().is_ok());
+
+        cfg.dns.listen = "127.0.0.2".to_string(); // no port
+        assert!(cfg.validate().is_err());
+
+        cfg.dns.listen = "127.0.0.2:0".to_string(); // ephemeral port
+        assert!(cfg.validate().is_err());
+
+        cfg.dns.listen = "127.0.0.2:53".to_string();
+        cfg.daemon.dashboard_port = 0;
+        assert!(cfg.validate().is_err());
+        assert!(cfg.dns.enabled && cfg.daemon.dashboard_enabled);
+
+        cfg.daemon.dashboard_port = 8760;
+        cfg.daemon.state_dir = String::new();
+        assert!(cfg.validate().is_err());
     }
 }

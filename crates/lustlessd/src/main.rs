@@ -100,6 +100,38 @@ async fn terminate_signal() {
     }
 }
 
+/// Exclusive `flock` on `<state_dir>/lustlessd.pid` (held for the process
+/// lifetime). Refuses a second daemon instead of letting two of them share the
+/// outbox/spool/crash ledger.
+fn acquire_singleton(state_dir: &Path) -> std::io::Result<std::fs::File> {
+    use std::io::Write as _;
+    use std::os::fd::AsRawFd as _;
+
+    std::fs::create_dir_all(state_dir)?;
+    let path = state_dir.join("lustlessd.pid");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)?;
+    // SAFETY: plain `flock(2)` on an fd we own.
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if rc != 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!(
+                "another lustlessd already holds {} (state dir {})",
+                path.display(),
+                state_dir.display()
+            ),
+        ));
+    }
+    let mut file = file;
+    let _ = file.set_len(0);
+    let _ = writeln!(file, "{}", std::process::id());
+    Ok(file)
+}
+
 /// Creates the §4 layout: `<state_dir>` 0700, socket dir 0755 (the socket
 /// itself is chmod 0666 by `ipc::serve`), spool root 0700. The classifier log
 /// dir is best-effort (§4 paths, created root-owned when possible).
@@ -170,6 +202,15 @@ fn config_path() -> PathBuf {
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let config_path = config_path();
     let cfg = Arc::new(LustlessConfig::load(&config_path));
+    cfg.validate().map_err(|err| format!("config: {err}"))?;
+
+    // Singleton guard: a second daemon would share the outbox, the spool and
+    // the crash ledger with the first (duplicate uploads, capture writes) and
+    // would report a false crash because the first has not rewritten its clean
+    // marker. The lock is held for the process lifetime.
+    let _singleton = acquire_singleton(Path::new(&cfg.daemon.state_dir))
+        .map_err(|err| format!("stage singleton: {err}"))?;
+
     ensure_layout(&cfg).map_err(|err| format!("stage ensure_layout: {err}"))?;
 
     let outbox = Arc::new(Mutex::new(
@@ -290,9 +331,26 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // dropping the `run` future cancels uploader/updater/dashboard), so it
     // is cancelled AFTER the final flush below (while its receiver lives).
     for task in tasks {
-        let _ = tokio::time::timeout(Duration::from_secs(5), task).await;
+        let mut task = task;
+        if tokio::time::timeout(Duration::from_secs(5), &mut task)
+            .await
+            .is_err()
+        {
+            // A task that ignores the shutdown broadcast is aborted: a detached
+            // capture task could otherwise keep writing the spool while the
+            // final flush and WAL checkpoint run.
+            task.abort();
+            tracing::warn!("a task exceeded its shutdown deadline and was aborted");
+        }
     }
-    let _ = tokio::time::timeout(Duration::from_secs(5), ipc).await;
+    let mut ipc = ipc;
+    if tokio::time::timeout(Duration::from_secs(5), &mut ipc)
+        .await
+        .is_err()
+    {
+        ipc.abort();
+        tracing::warn!("the ipc server exceeded its shutdown deadline and was aborted");
+    }
 
     // §11 `prerm` shape: bounded flush first (partial results still count),
     // then the §6.1 WAL checkpoint.

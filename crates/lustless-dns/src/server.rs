@@ -371,11 +371,14 @@ impl DnsServer {
         let attribution: Attribution = self.attributor.attribute(client.port(), local.ip());
 
         // §8 dual resolution: filter (DoH) path and user path in parallel.
+        // During a known outage the filter path is skipped outright: it would
+        // only pay its full timeout again before the user path answers.
         let (filter_result, user_result) = tokio::join!(
             async {
-                match &self.doh {
-                    Some(doh) => Some(doh.lookup(wire).await),
-                    None => None,
+                match (&self.doh, filter_outage) {
+                    (Some(_), true) => None,
+                    (Some(doh), false) => Some(doh.lookup(wire).await),
+                    (None, _) => None,
                 }
             },
             self.user.lookup(wire),

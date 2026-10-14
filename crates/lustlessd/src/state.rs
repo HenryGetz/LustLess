@@ -797,8 +797,11 @@ impl DaemonState {
         if reason.is_empty() {
             return Err("break-glass requires a reason".to_string());
         }
-        // Journald audit line required by §5 (`break-glass uid=N reason=…`).
-        tracing::info!("break-glass uid={uid} reason={reason}");
+        // Journald audit line required by §5: the tag promised by
+        // `org.lustless.policy`/`packaging/README.md` belongs on the *effect*
+        // line, with the uid and the reason (the polkit check result is a
+        // separate line and covers denials too).
+        tracing::info!("org.lustless.break-glass uid={uid} reason={reason}");
         guard(&self.policy).fail_open_override = true;
         if let Some(filter_state) = guard(&self.dns_filter).clone() {
             filter_state.lock().set_fail_closed_when_signed_out(false);
@@ -1154,6 +1157,10 @@ impl Notifier for DaemonState {
 }
 
 impl Control for DaemonState {
+    fn session_uid(&self) -> Option<u32> {
+        self.session().ok().map(|(uid, _)| uid)
+    }
+
     /// IPC `0x65 SIGN_IN` semantics (§5, evidence `signin-and-settings.md`
     /// §3):
     ///

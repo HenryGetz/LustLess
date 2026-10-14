@@ -15,7 +15,7 @@ Status vocabulary: **MUST/SHOULD/MAY** per RFC 2119.
 | item | value |
 |---|---|
 | product / package | `lustless` |
-| version | `0.1.8` (semver; `.deb` version = same) |
+| version | `0.1.9` (semver; `.deb` version = same) |
 | components | `lustlessd` (system daemon), `lustless-classifier` (scoring process, daemon-spawned), `lustless-agent` (per-session tray + dashboard helper), `lustlessctl` (admin/diagnostics CLI) |
 | kernel components | none (CE's observable surface is pure user mode — `re/findings/01-dynamic-recon/live-surface.md` §a–§f) |
 | target OS | **Zorin OS 17 (Lite and Core), Ubuntu 24.04, Xubuntu 24.04, Lubuntu 24.04** and generic systemd Linux desktops. Built against glibc 2.35 (ubuntu:22.04 build container) so one `.deb` runs on both 22.04-base (Zorin 17) and 24.04-base systems. Desktop-shell reality to respect: GNOME (Ubuntu/Zorin Core — SNI via AppIndicator extension, on by default in Ubuntu), Xfce (Xubuntu/Zorin Lite — SNI via `xfce4-indicator-plugin`), LXQt (Lubuntu — no SNI host; agent MUST degrade gracefully, §13) |

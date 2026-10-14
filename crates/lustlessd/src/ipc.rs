@@ -467,7 +467,10 @@ pub async fn polkit_authorized(pid: i32) -> bool {
             .deserialize::<(bool, bool, HashMap<String, OwnedValue>)>()
         {
             Ok((authorized, _challenge, _details)) => {
-                tracing::info!("polkit: {POLKIT_BREAK_GLASS_ACTION} authorized={authorized}");
+                tracing::info!(
+                    "polkit: {POLKIT_BREAK_GLASS_ACTION} {} (pid {pid})",
+                    if authorized { "authorized" } else { "denied" }
+                );
                 authorized
             }
             Err(err) => {
@@ -505,14 +508,22 @@ pub(crate) async fn dispatch(
     match code {
         // 0x43 — spawn the §5/§10 support bundle (CE texts via Notifier).
         Code::CollectDebugLogs => {
+            if let Err(err) = state.session_for(cred.uid) {
+                return DispatchOutcome::reply(error_reply("diagnostics", err));
+            }
             let started = state.start_diagnostics();
             DispatchOutcome::reply(json!({ "ok": true, "started": started }))
         }
 
         // 0x4c — CE schedules the filter re-evaluation after logout; here it
         // IS the sign-out (closes the §6.1 login row, clears §6.2 tokens,
-        // drops §8 membership).
+        // drops §8 membership). Self scope: the peer must own the session
+        // (§5) — without this any local uid could force a sign-out and, with
+        // `fail_closed_when_signed_out = false`, stop the filter.
         Code::UserLogout => {
+            if let Err(err) = state.session_for(cred.uid) {
+                return DispatchOutcome::reply(error_reply("logout", err));
+            }
             let state = Arc::clone(state);
             let result = tokio::task::spawn_blocking(move || Control::sign_out(state.as_ref()))
                 .await
@@ -523,8 +534,12 @@ pub(crate) async fn dispatch(
             }
         }
 
-        // 0x4d — flush the metrics outbox now (roll open buckets first).
+        // 0x4d — flush the metrics outbox now (roll open buckets first). Self
+        // scope (§5): the outbox is the signed-in session's data.
         Code::SendMetrics => {
+            if let Err(err) = state.session_for(cred.uid) {
+                return DispatchOutcome::reply(error_reply("metrics", err));
+            }
             let rolled = {
                 let mut outbox = guard(&state.outbox);
                 MetricSink::new(&mut outbox).roll_ready()
@@ -580,11 +595,17 @@ pub(crate) async fn dispatch(
             Err(err) => DispatchOutcome::reply(error_reply("settings", err)),
         },
 
-        // 0x54 — flush telemetry now (rows are born `queued`, §6.1).
-        Code::SendTelemetry => match flush_outbox_now(state, EVENT_FLUSH_DEADLINE_SECS).await {
-            Ok(flushed) => DispatchOutcome::reply(json!({ "ok": true, "flushed": flushed })),
-            Err(err) => DispatchOutcome::reply(error_reply("flush", err)),
-        },
+        // 0x54 — flush telemetry now (rows are born `queued`, §6.1). Self
+        // scope: any uid could otherwise force outbox traffic.
+        Code::SendTelemetry => {
+            if let Err(err) = state.session_for(cred.uid) {
+                return DispatchOutcome::reply(error_reply("telemetry", err));
+            }
+            match flush_outbox_now(state, EVENT_FLUSH_DEADLINE_SECS).await {
+                Ok(flushed) => DispatchOutcome::reply(json!({ "ok": true, "flushed": flushed })),
+                Err(err) => DispatchOutcome::reply(error_reply("flush", err)),
+            }
+        }
 
         // 0x55 — drain this connection's queued notifications; empty queue →
         // an empty 0x55 frame (Value::Null ⇒ zero-length payload, §5).
@@ -615,7 +636,13 @@ pub(crate) async fn dispatch(
         }
 
         // 0x61 — daemon status + uid-bound dashboard URL (§13 token pin).
+        // Self scope: the status carries the signed-in username, the filter
+        // level/health and mints a dashboard token, so it must not be readable
+        // by any local connection.
         Code::StatusGet => {
+            if let Err(err) = state.session_for(cred.uid) {
+                return DispatchOutcome::reply(error_reply("status", err));
+            }
             let dashboard_url = state.dashboard_url(cred.uid).unwrap_or_default();
             DispatchOutcome::reply(json!({
                 "ok": true,
@@ -762,6 +789,9 @@ pub(crate) async fn dispatch(
 
         // 0x67 — §12 feed recommendation via Control.
         Code::UpdateCheck => {
+            if let Err(err) = state.session_for(cred.uid) {
+                return DispatchOutcome::reply(error_reply("update", err));
+            }
             let state = Arc::clone(state);
             let result = tokio::task::spawn_blocking(move || Control::update_check(state.as_ref()))
                 .await

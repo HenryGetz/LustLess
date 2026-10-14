@@ -65,6 +65,30 @@ documented deviation, **✗** gap (work named).
    terms (item 5) and Wayland portal permission persistence on GNOME (item 3,
    now that the backend ships — needs a live GNOME/Wayland session).
 
+## Hardening round (v0.1.9)
+
+Two reviews beyond the subsystem mapping — the **local attack surface** (the
+user is the adversary) and **error paths** — found and closed:
+
+| Finding | Impact | Fix |
+|---|---|---|
+| Dashboard token uid validated then discarded | any local uid could sign the owner out, lower the filter level, or allow-list `*` | ownership enforced per mutation + regression test |
+| `0x4c` unguarded | any uid forces a sign-out (filter stops with `fail_closed_when_signed_out = false`) | session-scoped like `0x66` |
+| `0x61`/`0x43`/`0x4d`/`0x54`/`0x67` connection-scoped | global state leak + token minting + outbox flushes for any uid | session-scoped |
+| break-glass audit line lacked the promised tag | audit trail did not match the policy file | tagged effect line with uid+reason, denials distinguished |
+| agent token file fell back to `/tmp` | symlink capture of the session token | `XDG_RUNTIME_DIR`/`~/.local/state`, symlinks refused |
+| DNS failure was a log line | **filtering off while the daemon looked healthy** | `Outage` + notification, startup validation, fatal on a broken config |
+| classifier fail-closed exit counted as clean | 5 s respawn loop forever, no budget/metric/escalation | only status 0 is clean; spawn failures budgeted |
+| 4xx batches used `drop_invalid` | queue starved forever by poison rows | delete the claimed rows (test) |
+| block CNAME owned by the block host | **block page unreachable** (stub resolvers NODATA) | RFC 1034 owner = queried name (test) |
+| no singleton guard | two daemons sharing the outbox/spool/ledger + false crash report | `flock` on `<state_dir>/lustlessd.pid` |
+| spool orphans only cleaned by the classifier | unbounded disk growth | daemon-side sweep |
+| DoH timeout paid during a known outage | per-query latency during outages | filter path skipped on outage |
+
+Still open after this round: the download path buffers update payloads without a
+size cap before signature verification (`uploader.rs` response handling), and
+the `client_crashes` telemetry/`crash_type` split could carry more CE tags.
+
 ## How this was audited
 
 Two read-only passes over `re/findings/91-linux-mapping.md` rows 1–5 and 6–11:

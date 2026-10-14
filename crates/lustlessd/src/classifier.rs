@@ -427,10 +427,19 @@ impl ClassifierSupervisor {
             let mut child = match self.spawn(uid) {
                 Ok(child) => child,
                 Err(err) => {
+                    // A binary that cannot be spawned is the same failure as a
+                    // crash: count it against the budget so a missing or
+                    // non-executable classifier escalates instead of retrying
+                    // every 5 s forever with accountability silently off.
                     tracing::error!(
                         "classifier spawn failed (uid {uid}): {err}; retrying in {}s",
                         RELAUNCH_POLL.as_secs()
                     );
+                    let summary = self.state.crash.record_crash(uid, self.now_unix());
+                    self.record_crash_metric(uid);
+                    if summary.stopped_now {
+                        self.escalate(uid);
+                    }
                     if wait_or_shutdown(&mut shutdown, RELAUNCH_POLL).await {
                         break;
                     }
@@ -463,7 +472,12 @@ impl ClassifierSupervisor {
                     if uptime >= HEALTHY_RUN_SECS {
                         self.state.crash.reset_healthy(uid);
                     }
-                    let clean = saw_bye || status.as_ref().is_some_and(ExitStatus::success);
+                    // A fail-closed exit prints `bye` and returns 1: it is a
+                    // *failure* (missing/corrupt bundle, unusable data dir),
+                    // and treating it as clean bypassed the crash budget and
+                    // respawned the child every 5 s forever. Only a zero exit
+                    // status counts as clean; `saw_bye` stays for logging.
+                    let clean = status.as_ref().is_some_and(ExitStatus::success);
                     if clean {
                         tracing::info!(
                             "classifier exited cleanly (uid {uid}, bye: {saw_bye}, uptime {uptime}s)"

@@ -1,6 +1,6 @@
 [package]
 name = "lustless-agent"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 description = "LustLess per-session tray: GTK3 + libayatana-appindicator status icon and menu (docs/impl/CONTRACTS.md §13)"
 license = "Apache-2.0"

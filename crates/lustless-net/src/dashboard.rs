@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
-use axum::extract::{Form, Query, Request, State};
+use axum::extract::{Extension, Form, Query, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Redirect, Response};
@@ -95,11 +95,41 @@ pub(crate) fn router(state: DashboardState) -> Router {
 
 /// Token middleware: every request is validated (single-use is NOT
 /// required); unknown or expired tokens are 401.
-async fn auth(State(state): State<DashboardState>, request: Request, next: Next) -> Response {
+async fn auth(State(state): State<DashboardState>, mut request: Request, next: Next) -> Response {
     match extract_token(&request).and_then(|token| state.tokens.validate(&token, system_unix())) {
-        Some(_uid) => next.run(request).await,
+        Some(uid) => {
+            // The token's uid travels with the request: mutating handlers must
+            // prove it owns the current session (see `owns_session`).
+            request.extensions_mut().insert(TokenUid(uid));
+            next.run(request).await
+        }
         None => (StatusCode::UNAUTHORIZED, "unauthorized").into_response(),
     }
+}
+
+/// uid carried by the validated dashboard token.
+#[derive(Clone, Copy, Debug)]
+pub struct TokenUid(pub u32);
+
+/// True when the token's uid owns the signed-in session (root, which mints
+/// tokens for any uid, is not privileged here: the dashboard acts for the
+/// session owner only).
+fn owns_session(state: &DashboardState, uid: u32) -> bool {
+    match state.control.session_uid() {
+        Some(session_uid) => session_uid == uid,
+        // Signed out: nothing to mutate, so any token is harmless — but the
+        // routes that sign in must still be reachable, which they are.
+        None => true,
+    }
+}
+
+/// 403 for a token whose uid does not own the session.
+fn forbidden() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        "this dashboard token belongs to a different user session",
+    )
+        .into_response()
 }
 
 /// Extracts the token from `?t=` (first occurrence) or the Bearer header.
@@ -290,7 +320,13 @@ async fn sign_in_submit(
     }
 }
 
-async fn sign_out_submit(State(state): State<DashboardState>) -> Response {
+async fn sign_out_submit(
+    State(state): State<DashboardState>,
+    Extension(TokenUid(uid)): Extension<TokenUid>,
+) -> Response {
+    if !owns_session(&state, uid) {
+        return forbidden();
+    }
     match state.control.sign_out() {
         Ok(_) => Redirect::to("/?notice=signed-out").into_response(),
         Err(err) => {
@@ -342,8 +378,12 @@ pub(crate) struct LevelForm {
 
 async fn level_submit(
     State(state): State<DashboardState>,
+    Extension(TokenUid(uid)): Extension<TokenUid>,
     Form(form): Form<LevelForm>,
 ) -> Response {
+    if !owns_session(&state, uid) {
+        return forbidden();
+    }
     match state.control.set_filter_level(&form.level) {
         Ok(_) => Redirect::to("/settings?notice=saved").into_response(),
         Err(err) => {
@@ -360,8 +400,12 @@ pub(crate) struct OverrideForm {
 
 async fn override_submit(
     State(state): State<DashboardState>,
+    Extension(TokenUid(uid)): Extension<TokenUid>,
     Form(form): Form<OverrideForm>,
 ) -> Response {
+    if !owns_session(&state, uid) {
+        return forbidden();
+    }
     if !matches!(form.verdict.as_str(), "allow" | "block" | "na") {
         return Redirect::to("/settings?error=invalid+verdict").into_response();
     }
@@ -416,7 +460,13 @@ async fn activity_page(State(state): State<DashboardState>) -> Html<String> {
     Html(layout("DNS activity", &snapshot, &body))
 }
 
-async fn diagnostics_submit(State(state): State<DashboardState>) -> Response {
+async fn diagnostics_submit(
+    State(state): State<DashboardState>,
+    Extension(TokenUid(uid)): Extension<TokenUid>,
+) -> Response {
+    if !owns_session(&state, uid) {
+        return forbidden();
+    }
     match state.control.collect_debug() {
         Ok(_) => Redirect::to("/?notice=diagnostics").into_response(),
         Err(err) => Redirect::to(&format!("/?error={}", percent_encode(&err))).into_response(),
@@ -555,6 +605,51 @@ mod tests {
             clock: Arc::new(RwLock::new(ClockAnchor::system())),
         };
         (state, control, tokens)
+    }
+
+    /// The dashboard validates a token's uid — and must *enforce* it: a token
+    /// minted for another user may not drive the signed-in session (this was
+    /// the F1 finding: the uid was checked and then discarded, so any local
+    /// uid could sign the owner out or lower their filter level).
+    #[tokio::test]
+    async fn a_token_for_another_uid_cannot_mutate_the_session() {
+        let dir = temp_dir("dashboard-foreign-token");
+        let (state, control, tokens) = test_state(&dir);
+        // The session belongs to uid 1000 …
+        *control.session_uid.lock() = Some(1000);
+        // … and the token belongs to uid 1001.
+        let token = tokens.issue(1001, super::system_unix());
+        let base = spawn_app(state).await;
+        let client = no_redirect_client();
+
+        let response = client
+            .post(format!("{base}/sign-out?t={token}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+        let response = client
+            .post(format!("{base}/settings/level?t={token}"))
+            .form(&[("level", "Blocking Enabled")])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+        assert!(
+            control.calls().is_empty(),
+            "a foreign token must not reach the control surface: {:?}",
+            control.calls()
+        );
+
+        // The owner's own token still works.
+        let owner = tokens.issue(1000, super::system_unix());
+        let response = client
+            .post(format!("{base}/sign-out?t={owner}"))
+            .send()
+            .await
+            .unwrap();
+        assert_ne!(response.status(), reqwest::StatusCode::FORBIDDEN);
+        assert_eq!(control.calls(), vec!["sign_out".to_string()]);
     }
 
     async fn spawn_app(state: DashboardState) -> String {

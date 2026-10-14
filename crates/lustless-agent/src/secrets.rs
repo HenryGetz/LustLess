@@ -59,15 +59,33 @@ fn file_component(username: &str) -> String {
 /// The fallback token file: `$XDG_RUNTIME_DIR/lustless-agent/session-token-<user>`
 /// (0600 in a 0700 directory — `XDG_RUNTIME_DIR` itself is 0700, §4 spirit).
 pub fn token_file(username: &str) -> PathBuf {
+    // `XDG_RUNTIME_DIR` (0700, per-session) first; otherwise the user's own
+    // state dir. NEVER `/tmp`: a world-writable parent lets a local attacker
+    // pre-create the directory as a symlink and capture the session token.
     let base = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".local/state")
+        })
         .join("lustless-agent");
     base.join(format!("session-token-{}", file_component(username)))
 }
 
 fn write_token_file(path: &PathBuf, token: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
+        // Refuse to follow a symlinked directory into an attacker-chosen path.
+        if let Ok(meta) = std::fs::symlink_metadata(parent) {
+            if meta.file_type().is_symlink() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("token dir {} is a symlink", parent.display()),
+                ));
+            }
+        }
         std::fs::create_dir_all(parent)?;
         std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
     }

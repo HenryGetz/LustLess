@@ -1,5 +1,74 @@
 # Changelog
 
+## v0.1.9 — hardening: local tamper, fail-open DNS, poisoned queues
+
+Two focused reviews (local attack surface, error paths) were run against the
+shipped code; this release fixes what they found. In an accountability client
+the person using the machine is the adversary, so the tamper findings matter as
+much as crashes.
+
+### Local tamper (any unprivileged user, previously)
+
+- **Dashboard tokens are enforced, not just validated.** `auth` checked the
+  token's uid and then discarded it, so any local user could fetch a token over
+  the 0666 IPC socket (`0x61`) and drive the signed-in session: sign it out,
+  lower the filter level to the weakest, or add an allow-override for `*`.
+  Mutating routes now require the token's uid to own the session (403
+  otherwise), with a regression test.
+- **`0x4c USER_LOGOUT` is session-scoped.** It had no ownership check, so any
+  local uid could force a sign-out — and with
+  `fail_closed_when_signed_out = false`, stop the filter.
+- **`0x61`/`0x43`/`0x4d`/`0x54`/`0x67` are session-scoped.** They leaked the
+  signed-in username, filter level/health and outbox path to any uid, minted a
+  dashboard token for the caller, and let any uid trigger diagnostics, outbox
+  flushes and a feed fetch.
+- **Break-glass audit** carries the promised tag on the effect line
+  (`org.lustless.break-glass uid=… reason=…`), and the polkit check line
+  distinguishes granted from denied.
+- **Agent token file** no longer falls back to world-writable `/tmp` (a local
+  attacker could pre-create the directory as a symlink and capture the session
+  token): `XDG_RUNTIME_DIR` or `~/.local/state`, and a symlinked directory is
+  refused.
+
+### Fail-open and queue defects
+
+- **DNS could silently stop filtering while the daemon looked healthy.** A
+  forwarder that failed to build (bad `dns.listen`/`doh_url`) or bind (port in
+  use) just logged and returned. It is now marked `Outage` and reported to the
+  user, `dns.listen`/port values are validated at startup, and an unparsable
+  config **refuses to start** instead of silently running with defaults.
+- **A fail-closed classifier exit was treated as clean.** It prints `bye` and
+  returns 1, so the supervisor skipped the crash budget, the `client_crash`
+  metric and the escalation, and respawned the child every 5 s forever with
+  screen accountability off. Only a zero exit status is clean now, and spawn
+  failures count against the same budget.
+- **Rejected (4xx) batches poisoned the queue forever.** The uploader called
+  `drop_invalid`, whose predicate only matches *locally* invalid rows, so
+  nothing was deleted: the batch stayed `sending`, was reaped, re-claimed
+  oldest-first and starved everything behind it. Deterministic rejections now
+  delete exactly the claimed rows (with a regression test), and the support-log
+  ring is restored on rejection instead of being silently lost.
+- **Block pages never loaded.** The synthesized CNAME was owned by
+  `blocked.lustless.local` instead of the queried name, so a real stub resolver
+  found no chain from the question and returned NODATA. The answer is now
+  RFC 1034-shaped (owner = queried name, target = block host).
+- **DNS outage no longer pays the DoH timeout per query** (the filter path is
+  skipped while the health machine says outage).
+- **A second daemon could run.** Two instances shared the outbox, the spool and
+  the crash ledger, and the second reported a false crash. `lustlessd` now
+  holds an exclusive `flock` on `<state_dir>/lustlessd.pid` and refuses to
+  start.
+- **Spool hygiene from the daemon**: orphaned transactions are swept on a slow
+  cadence (the classifier only did it at its own startup, so a SIGKILLed daemon
+  leaked folders — and disk — forever).
+- **Shutdown aborts** tasks that overrun their deadline instead of detaching
+  them, and the staged update payload is deleted after install.
+
+Verified: the singleton guard (second start exits 1 with a clear message), the
+config validation and parse-failure refusal, and the new regression tests
+(dashboard ownership, rejected-batch deletion, config validation).
+Workspace suite: **313 passed, 0 failed**.
+
 ## v0.1.8 — crash-reporting pipeline (CE parity, minus the databases)
 
 The biggest remaining parity gap (`docs/impl/PARITY.md` gap 1) is closed:

@@ -68,6 +68,11 @@ pub trait Notifier: Send + Sync + 'static {
 /// password is processed and never stored (§5/§6.2); `update_check` returns
 /// the update recommendation string.
 pub trait Control: Send + Sync + 'static {
+    /// uid of the currently signed-in session, `None` when signed out. The
+    /// dashboard uses it to reject mutations from a token minted for a
+    /// different user (the token's uid was previously validated and then
+    /// discarded, so any local uid could drive the session).
+    fn session_uid(&self) -> Option<u32>;
     /// Signs in (IPC 0x65) and returns the session token.
     fn sign_in(&self, username: &str, password: &str) -> Result<String, String>;
     /// Signs out (IPC 0x66), clearing stored credentials (§6.2).
@@ -356,6 +361,9 @@ pub(crate) mod test_mocks {
     #[derive(Default)]
     pub(crate) struct MockControl {
         calls: Mutex<Vec<String>>,
+        /// uid the mock reports as the signed-in session (dashboard tests set
+        /// it to exercise the token-ownership check).
+        pub(crate) session_uid: Mutex<Option<u32>>,
     }
 
     impl MockControl {
@@ -366,6 +374,10 @@ pub(crate) mod test_mocks {
     }
 
     impl Control for MockControl {
+        fn session_uid(&self) -> Option<u32> {
+            *self.session_uid.lock()
+        }
+
         fn sign_in(&self, username: &str, _password: &str) -> Result<String, String> {
             self.calls.lock().push(format!("sign_in:{username}"));
             Ok("session-token".to_string())

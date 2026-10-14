@@ -25,8 +25,8 @@ use lustless_core::db::DnsActivityRow as CoreDnsActivityRow;
 use lustless_core::metrics::{AggTag, Aggregation, MetricName};
 use lustless_dns::server::{DnsServer, DnsSettings, PolicyProvider as DnsPolicyProvider};
 use lustless_dns::{
-    ActivitySink, BlockPageServer, DnsActivityRow, DnsError, HealthEvent, HealthSink,
-    LookupOutcome, OverrideVerdict,
+    ActivitySink, BlockPageServer, DnsActivityRow, DnsError, FilterHealth, FilterState,
+    HealthEvent, HealthSink, LookupOutcome, OverrideVerdict,
 };
 
 use crate::state::{guard, DaemonState};
@@ -229,7 +229,22 @@ pub async fn spawn(state: Arc<DaemonState>, shutdown: watch::Receiver<bool>) {
     ) {
         Ok(server) => server,
         Err(err) => {
+            // Web filtering is the product's core guarantee: a forwarder that
+            // cannot even be built must never look healthy. Mark the filter
+            // unhealthy and tell the user instead of logging and returning.
             tracing::error!("dns: engine build failed: {err}");
+            let mut filter_state = FilterState::new(cfg.dns.fail_closed_when_signed_out);
+            filter_state.set_health(FilterHealth::Outage);
+            let filter_state = Arc::new(lustless_dns::EngineMutex::new(filter_state));
+            let health = Arc::new(lustless_dns::EngineMutex::new(
+                lustless_dns::health::DnsHealth::new(&cfg.dns.doh_url, None),
+            ));
+            state.attach_dns(Arc::clone(&filter_state), Arc::clone(&health));
+            state.notify(
+                "error",
+                "LustLess could not start its DNS filter — web filtering is OFF until this is fixed (check [dns] in /etc/lustless/lustless.toml)",
+                None,
+            );
             return;
         }
     };
@@ -281,7 +296,17 @@ pub async fn spawn(state: Arc<DaemonState>, shutdown: watch::Receiver<bool>) {
     tracing::info!("dns: forwarder listening on {}", cfg.dns.listen);
     match server.run(shutdown.clone()).await {
         Ok(()) => tracing::info!("dns: forwarder stopped"),
-        Err(err) => tracing::error!("dns: forwarder failed: {err}"),
+        Err(err) => {
+            // Same rule as the build failure: a dead forwarder is not a
+            // healthy filter. Mark it and say so.
+            tracing::error!("dns: forwarder failed: {err}");
+            filter_state.lock().set_health(FilterHealth::Outage);
+            state.notify(
+                "error",
+                "LustLess DNS filtering stopped (forwarder failed) — web filtering is OFF",
+                None,
+            );
+        }
     }
     mirror.abort();
 }

@@ -69,7 +69,7 @@ pub struct ClientBlock {
     pub architecture: String,
     /// OS release string (e.g. `/etc/os-release` `VERSION_ID`).
     pub platform_version: String,
-    /// Client version (§1: `0.1.8` — see
+    /// Client version (§1: `0.1.9` — see
     /// [`LUSTLESS_VERSION`](crate::LUSTLESS_VERSION)).
     pub version: String,
 }

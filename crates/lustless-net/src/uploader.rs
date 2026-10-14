@@ -732,15 +732,22 @@ pub(crate) fn throttle_seconds(body: &[u8], retry_after: Option<u64>) -> i64 {
 /// `<state_dir>/uploader-state.json` (§10).
 fn persist_state(state: &UploaderState, state_path: &Path) {
     if let Some(parent) = state_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        if let Err(err) = std::fs::create_dir_all(parent) {
+            error!("creating the uploader state dir failed: {err}");
+        }
     }
     let Ok(text) = serde_json::to_string(state) else {
         return;
     };
     let tmp = state_path.with_extension("json.tmp");
-    if std::fs::write(&tmp, text).is_ok() {
-        if let Err(err) = std::fs::rename(&tmp, state_path) {
-            error!("persisting uploader state failed: {err}");
+    match std::fs::write(&tmp, text) {
+        // A lost state file loses the server's 429 throttle across a restart
+        // (re-request storm) and any resume stamp, so both failures are logged.
+        Err(err) => error!("writing uploader state failed: {err}"),
+        Ok(()) => {
+            if let Err(err) = std::fs::rename(&tmp, state_path) {
+                error!("persisting uploader state failed: {err}");
+            }
         }
     }
 }
@@ -1074,7 +1081,12 @@ impl Uploader {
                             }
                         }
                         SendOutcome::Rejected => {
-                            let _ = lock_outbox(&self.outbox).drop_invalid(table, &ok_ids);
+                            // The server rejected this batch: drop exactly the
+                            // rows we claimed (a locally-invalid subset was
+                            // already removed above). Without this the batch
+                            // stayed `sending`, was reaped, re-claimed
+                            // oldest-first and starved the queue forever.
+                            let _ = lock_outbox(&self.outbox).delete_rows(table, &ok_ids);
                         }
                         SendOutcome::Throttled => {
                             outcome.throttled = true;
@@ -1194,8 +1206,8 @@ impl Uploader {
                         }
                     }
                     SendOutcome::Rejected => {
-                        let _ =
-                            lock_outbox(&self.outbox).drop_invalid(EventTable::Telemetry, &ok_ids);
+                        let _ = lock_outbox(&self.outbox)
+                            .delete_rows(EventTable::Telemetry, &ok_ids);
                     }
                     SendOutcome::Throttled => {
                         outcome.throttled = true;
@@ -1217,7 +1229,15 @@ impl Uploader {
                 let url = format!("{}/v1/logs/store", base_url(&self.cfg));
                 let body = Value::Array(drained.clone()).to_string();
                 match self.send("logs", ApiMethod::Post, &url, Some(body)).await {
-                    SendOutcome::Accepted | SendOutcome::Rejected => {}
+                    SendOutcome::Accepted => {}
+                    SendOutcome::Rejected => {
+                        // A rejected support-log batch is not retryable either,
+                        // but the ring's contract is "drain returns the records
+                        // for the caller to keep or discard" — restore them so
+                        // they are not silently lost, and stop re-sending them
+                        // by marking the drain complete for this cycle.
+                        self.audit.restore_front(drained);
+                    }
                     SendOutcome::Throttled => {
                         self.audit.restore_front(drained);
                         outcome.throttled = true;
@@ -1598,15 +1618,28 @@ mod tests {
         }
 
         fn uploader(&self) -> Uploader {
+            self.uploader_over(self.http.clone())
+        }
+
+        /// Uploader over an alternative transport (e.g. one that rejects).
+        fn uploader_over(&self, http: Arc<MockHttp>) -> Uploader {
             Uploader::new(
                 self.cfg.clone(),
                 self.outbox.clone(),
                 self.clock.clone(),
                 self.policy.clone(),
-                self.http.clone(),
+                http,
                 self.audit.clone(),
             )
             .with_tuning(0, STALE_SENDING_SECS)
+        }
+
+        /// Rows still sitting in `dns_activity`.
+        fn dns_rows(&self) -> usize {
+            lock_outbox(&self.outbox)
+                .dns_activity_readback(100)
+                .map(|rows| rows.len())
+                .unwrap_or(0)
         }
 
         fn set_cfg(&self, f: impl FnOnce(&mut LustlessConfig)) -> Arc<LustlessConfig> {
@@ -1710,6 +1743,42 @@ mod tests {
                     .unwrap_or(false)
             })
             .collect()
+    }
+
+    /// A deterministic 4xx must drop exactly the claimed batch. It used to
+    /// call `drop_invalid`, whose predicate only matches *locally* invalid rows
+    /// (empty username/name), so nothing was deleted: the batch stayed
+    /// `sending`, was reaped after the lease, re-claimed oldest-first and
+    /// starved the queue forever.
+    #[test]
+    fn a_rejected_batch_is_deleted_instead_of_starving_the_queue() {
+        let harness = Harness::new("rejected-batch");
+        harness.insert_dns("blocked.example");
+        assert_eq!(harness.dns_rows(), 1);
+
+        // Only the activity-log route rejects: a blanket 400 would fail the
+        // pre-flight routes first and never reach the batch under test.
+        let rejecting = Arc::new(MockHttp::new(|request: ApiRequest| {
+            if request.url.contains("activity_log") {
+                ApiResponse {
+                    status: 400,
+                    body: b"{\"error\":\"invalid record\"}".to_vec(),
+                    retry_after: None,
+                }
+            } else {
+                MockHttp::ok_json("{}")
+            }
+        }));
+        let mut uploader = harness.uploader_over(rejecting);
+        let runtime = runtime();
+
+        let outcome = runtime.block_on(uploader.flush_cycle());
+        assert_eq!(harness.dns_rows(), 0, "the rejected row must be removed");
+
+        // The next cycle has nothing left to re-send (no poison loop).
+        let again = runtime.block_on(uploader.flush_cycle());
+        assert_eq!(again.rows, 0);
+        let _ = outcome;
     }
 
     #[test]

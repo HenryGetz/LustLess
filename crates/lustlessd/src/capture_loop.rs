@@ -36,6 +36,15 @@ use lustless_core::metrics::MetricName;
 use crate::sessions::SessionRegistry;
 use crate::state::{wait_or_shutdown, CreatedTxn, DaemonState};
 
+/// How often the daemon sweeps the spool for orphans.
+const CLEANUP_EVERY: Duration = Duration::from_secs(300);
+/// CE's spool ages (`capture-pipeline.md` §"clean PDL send folders"): the
+/// classifier uses the same pair at its startup.
+const INCOMPLETE_MAX_AGE: Duration = Duration::from_secs(3600);
+const STALE_MAX_AGE: Duration = Duration::from_secs(1800);
+/// Last sweep (process-wide; the loop is single-instance).
+static CLEANUP_LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
 /// CE's gate/classifier-down retry (§7: `5000 ms`).
 const GATE_RETRY: Duration = Scheduler::RETRY_CLASSIFIER_DOWN;
 
@@ -114,6 +123,42 @@ async fn tick(
         state.set_capture_active(false);
         return GATE_RETRY;
     }
+    // §6.3 spool hygiene: the classifier only cleans orphans at *its* startup,
+    // so a daemon killed mid-transaction (or a classifier that is alive but
+    // not consuming) would leak folders — and disk — forever. The daemon runs
+    // the same cleanup on a slow cadence.
+    {
+        let now = std::time::Instant::now();
+        let mut last = CLEANUP_LAST.lock().unwrap_or_else(|err| err.into_inner());
+        if last
+            .map(|at| now.duration_since(at) > CLEANUP_EVERY)
+            .unwrap_or(true)
+        {
+            *last = Some(now);
+            let spool = PathBuf::from(&cfg.capture.spool_dir);
+            let uid_name = lustless_core::ids::url_safe_username(&username);
+            match lustless_capture::spool::cleanup_orphaned(
+                &spool,
+                &uid_name,
+                INCOMPLETE_MAX_AGE,
+                STALE_MAX_AGE,
+            ) {
+                Ok(report)
+                    if !report.removed_incomplete.is_empty()
+                        || !report.removed_stale.is_empty() =>
+                {
+                    tracing::info!(
+                        "capture: spool cleanup removed {} incomplete and {} stale transaction(s)",
+                        report.removed_incomplete.len(),
+                        report.removed_stale.len()
+                    );
+                }
+                Ok(_) => {}
+                Err(err) => tracing::debug!("capture: spool cleanup skipped: {err}"),
+            }
+        }
+    }
+
     // §7 classifier-alive gate (CE: 5 s while it is down).
     if !state.classifier_alive() {
         state.set_capture_active(false);
