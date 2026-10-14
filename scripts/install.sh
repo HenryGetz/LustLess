@@ -3,11 +3,11 @@
 # matching package (PACKAGING-MATRIX §2). POSIX sh, pipe-safe:
 #
 #   curl -fsSL <raw-url>/scripts/install.sh | sudo bash      # download + install
-#   sh install.sh ./lustless_0.1.10_amd64.deb                 # install a local file
+#   sh install.sh ./lustless_0.1.11_amd64.deb                 # install a local file
 #
 # Env:
 #   LUSTLESS_RELEASE_URL   base URL of the release assets
-#                          (default: the project's GitHub v0.1.10 release)
+#                          (default: the project's GitHub v0.1.11 release)
 #
 # Families: apk (Alpine), pacman (Arch/SteamOS), rpm-ostree (Bazzite — a
 # reboot is required after layering), dnf/rpm (Fedora), apt (Debian/Ubuntu/
@@ -17,8 +17,8 @@
 set -eu
 set -o pipefail 2>/dev/null || true
 
-VERSION="0.1.10"
-DEFAULT_BASE="https://github.com/HenryGetz/LustLess/releases/download/v0.1.10"
+VERSION="0.1.11"
+DEFAULT_BASE="https://github.com/HenryGetz/LustLess/releases/download/v0.1.11"
 BASE="${LUSTLESS_RELEASE_URL:-$DEFAULT_BASE}"
 
 die() { echo "install.sh: $*" >&2; exit 1; }

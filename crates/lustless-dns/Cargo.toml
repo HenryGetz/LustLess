@@ -1,6 +1,6 @@
 [package]
 name = "lustless-dns"
-version = "0.1.10"
+version = "0.1.11"
 edition = "2021"
 description = "LustLess DNS forwarder engine: dual DoH/user resolution, CE 15-code verdicts, block synthesis, per-process attribution, filter health machine (docs/impl/CONTRACTS.md §8)"
 license = "Apache-2.0"

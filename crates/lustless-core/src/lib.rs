@@ -22,7 +22,7 @@
 use thiserror::Error;
 
 /// Version of the `lustless` product this crate was built from (CONTRACTS §1:
-/// `0.1.10`); used for the `client.version` field of upload records (§10).
+/// `0.1.11`); used for the `client.version` field of upload records (§10).
 pub const LUSTLESS_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The single error type of this crate (one `thiserror` enum for all modules).
