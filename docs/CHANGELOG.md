@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.1.6 — branded sign-in window, verified on Zorin OS Lite
+
+- **The sign-in window shows the CE shield**: the real artwork (88×94, from
+  the Windows build — the same image the dashboard embeds) beside the product
+  name and an “Accountability — sign in to continue” subtitle, with the window
+  icon set as well. It is shipped as
+  `/usr/share/lustless/lustless-mark.png` by every format; the dialog renders
+  without it if the file is missing.
+- `StartupWMClass=lustless-agent` in both `.desktop` entries, so Xfce's window
+  list/taskbar and the Zorin/Whisker menu use the CE icon for the running
+  window.
+- polkit prompts (`org.lustless.break-glass`,
+  `org.lustless.disable-protection`) carry the CE shield as their icon.
+- Package/CLI version `0.1.6`; installer release-pinned to `v0.1.6`.
+
+Verified on a real **Zorin OS 17.3 Lite** live VM (`docs/impl/TEST-MATRIX.md`
+§ “Zorin OS 17.3 Lite”): apt install with no missing dependencies, resolver
+stack detected, daemon enabled, the branded sign-in window opening by itself,
+the shield in the Xfce notification area, and the menu entry with the shield
+icon — screenshots in `target/testbed/zorin-lite-*.png`.
+
 ## v0.1.5 — DNS that stays alive (and answers instantly when signed out)
 
 Fail-closed is about *filtering decisions*, not about taking the machine off
