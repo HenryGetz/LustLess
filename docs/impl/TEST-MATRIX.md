@@ -178,3 +178,22 @@ packaging/build-arch.sh; packaging/build-apk.sh
 target/testbed/qmon.sh <container> raw 'drive_add 0 if=none,file=/storage/lustless-cd.iso,...'
 target/testbed/qmon.sh <container> text 'apk add ...'   # sendkey via QEMU monitor
 ```
+
+## Wayland capture (v0.1.10)
+
+The portal + PipeWire backend is the one subsystem whose verification cannot be
+split from a live compositor, so the rows below separate what is *proven* from
+what is *outstanding*.
+
+| What | Result |
+|---|---|
+| Version-tolerant bindings: all 24 SPA pod constants (`pipewire_pod.rs`) | **✔** — a probe compiled with the real headers prints identical values on `ubuntu:22.04` (libspa 0.3.48) and `ubuntu:24.04` (1.0.x) |
+| Symbol resolution at runtime | **✔** — `load_resolves_the_system_library_when_pipewire_is_installed` resolves all 25 dlsym'd entry points against the real `libpipewire-0.3.so.0` 1.0.5 on the dev host |
+| FFI contract end to end without a compositor | **✔** — `crates/lustless-capture/tests/pipewire_sys_fake.rs` compiles a stub `libpipewire-0.3.so.0` from the real 0.3.48 headers and drives the RAII wrappers: `pw_core_methods::get_registry` at offset 48 through the real `spa_interface`, the registry `restricted` property through the real `spa_dict` layout, the negotiated format pod through `parse_video_info`, the padded-stride frame the stub publishes, and buffer queueing |
+| Release build without PipeWire headers | **✔** — `cargo build -p lustless-capture` and the full `--release` build in the `ubuntu:22.04` container with **no** `libpipewire-0.3-dev` and **no** `libclang-dev`: exit 0, 50 tests pass |
+| No link dependency | **✔** — `readelf -d` on all four release binaries: no `libpipewire`/`libspa` `DT_NEEDED`; the soname is present as a `dlopen` target string |
+| Daemon resolves the session, not its own environment | **✔ live** (Ubuntu 24.04 VM, 0.1.10 installed): `capture: session env applied (uid 1000, type X11, display None)` — the *session's* kind, in a root system service with no session environment |
+| X11 display recovery | **✔ fixed from a live failure** — the same VM logged `capture: backend open failed: display connection failed: $DISPLAY variable not set`, because logind's `Display` property is empty on this image (also empty on Zorin 17.3). Now recovered from the session leader's `/proc/<pid>/environ`, then a bounded descendant walk, then the file probe, then `:0` for X11 only |
+| Classifier readiness | **✔ live** — same VM: `classifier v0.1.10 ready`, all six CE artifacts loaded (`b1/b2/b3-scorer`, `sw-labels`, `calibration`, `mn`), `threshold 0.467 (calibration artifact), input 224x224` |
+| Portal ScreenCast grant + real frame extraction | **✘ not yet observed.** Both testbed images ship `WaylandEnable=false` in `/etc/gdm3/custom.conf`, so GDM never offers a Wayland session (no session chooser on the login screen, and `XSession=...-wayland` is ignored). Undoing that (comment the line, disable the X11 `xsessions` entries, set the session in AccountsService — done on the Ubuntu VM) is necessary but was not sufficient within this session: the VM console (VNC + the QEMU monitor `sendkey` path) could not get a shell to run the harness. The harness for the run is staged and self-contained: `target/serve-cap.sh` (install → offline sign-in → wait for a tick → dump spool, manifest, daemon log), fetched in the VM with `wget 172.30.16.1/cap.sh -O /tmp/cap.sh; sh /tmp/cap.sh` |
+| X11 capture on a real desktop | **✘ not yet observed** for the same reason (the session was X11 but no shell could be driven to install/sign-in and let a tick run). The DISPLAY defect above was found from the daemon's own log during the run, which is what that log is there for |

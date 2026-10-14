@@ -12,7 +12,7 @@ documented deviation, **✗** gap (work named).
 
 | # | Subsystem | Status | Evidence (code / test / run) |
 |---|---|---|---|
-| 1 | Screen capture + screenstate pipeline | ✗ | X11 MIT-SHM (`capture/src/x11.rs`) ships and works; the Wayland portal + PipeWire backend (`capture/src/wayland.rs`, `wayland-portal` feature) is implemented but **not shipped** — see gap 0. Both backends share the verified file-transaction handoff, ready marker, jittered cadence and the CE retry ladder (`capture/src/{spool,manifest,scheduler}.rs`, tests `jitter_stays_within_uniform_bounds`, `retry_ladder_matches_ce_table`); tamper rows for removed/renamed transactions ✓ |
+| 1 | Screen capture + screenstate pipeline | ✓* | **Both** backends ship (v0.1.10): X11 MIT-SHM and the Wayland portal + PipeWire backend. The PipeWire side runs on our own version-tolerant bindings (`capture/src/pipewire_sys.rs`, dlopen — no link dependency, no libpipewire headers at build time) with our own SPA pod codec (`capture/src/pipewire_pod.rs`); all 24 pod constants print identically on 22.04 and 24.04, all 25 dlsym'd symbols resolve against the real 1.0.5 library (`load_resolves_the_system_library_when_pipewire_is_installed`), the release build needs neither `libpipewire-0.3-dev` nor `libclang-dev`, and no shipped binary carries a `libpipewire`/`libspa` `DT_NEEDED`. The FFI contract is exercised end to end against a stub `libpipewire-0.3.so.0` built from the real headers (`tests/pipewire_sys_fake.rs`: registry vtable, `restricted` via the real `spa_dict`, format-pod negotiation, padded-stride frame extraction, buffer queueing). *Deviation*: the portal grant + real frame extraction have not yet been observed against a live compositor — see gap 0. Both backends share the verified file-transaction handoff, ready marker, jittered cadence and the CE retry ladder (`capture/src/{spool,manifest,scheduler}.rs`, tests `jitter_stays_within_uniform_bounds`, `retry_ladder_matches_ce_table`); tamper rows for removed/renamed transactions ✓ |
 | 2 | Classifier (on-device ML) | ✓ | Real CE bundle decrypts, loads and **scores** — verified end to end on a synthetic 640×480 transaction: `{"app":"firefox","score":0.0,"flagged":false,"scored_windows":1}` with `threshold 0.467` from the calibration artifact and all six artifacts (`b1/b2/b3-scorer`, `sw-labels`, `mn`) loaded; `doNotScore` windows skipped (`classifier/src/consumer.rs`) |
 | 3 | DNS/URL filtering | ✓* | Forwarder on 127.0.0.2 with dual resolution, RPZ-style synthetic blocks, block page, browser DoH-lockdown policies; *deviation*: shipped upstream is a CleanBrowsing-family endpoint (open item 5 — redistribution terms) |
 | 4 | Local IPC + dashboard | ✓* | Unix socket + `SO_PEERCRED` replaces CE's unauthenticated TCP 48867; the 1-byte code + payload vocabulary is kept; token-authenticated dashboard (401 anonymous, verified) |
@@ -26,16 +26,23 @@ documented deviation, **✗** gap (work named).
 
 ## Remaining gaps, ranked
 
-0. **Wayland capture is not in the shipped binaries.** `packaging/build-binaries.sh`
-   builds `--no-default-features` for every format, so a Wayland session
-   (GNOME: Zorin Core, Ubuntu, Fedora) gets X11/XWayland root capture and a
-   logged warning — most of the screen is missed. Turning the feature on is
-   *not* a flag flip: the `pipewire` crate's `spa_sys` bindings reference
-   libspa symbols/fields newer than the 22.04 (Zorin 17) baseline — the build
-   fails, and a binary linked against a newer libspa would fail to load on the
-   target. Work: version-tolerant PipeWire access (dlopen the ~15 spa entry
-   points used, or a crate pin matching 0.3.48), then a live GNOME/Wayland
-   verification of the portal grant and frame extraction.
+0. **Live portal-grant verification is the one step left on Wayland capture.**
+   The *shipping* half is closed (v0.1.10): the backend is in every build, the
+   `pipewire` crate is gone in favour of our own dlopen'd bindings, the build
+   needs no pipewire headers and links no libpipewire, and the FFI contract is
+   proven against a stub library built from the real 0.3.48 headers plus the
+   real 1.0.5 library on a dev host. What is **not** yet observed is a real
+   compositor granting ScreenCast and handing us a frame. That work is blocked
+   on the *testbeds*, not the code: both VM images ship
+   `WaylandEnable=false` in `/etc/gdm3/custom.conf` (so GDM never offers or
+   starts a Wayland session — the login screen shows no session chooser), and
+   once that is undone the daemon-side path can be exercised; the harness for
+   it is staged (`target/serve-cap.sh`: install → offline sign-in → wait for a
+   tick → dump the spool, manifest and daemon log). Evidence collected from the
+   half-completed live run is already valuable and is recorded in
+   `TEST-MATRIX.md` (the daemon resolving the *session's* kind, the classifier
+   loading all six CE artifacts, the logind `Display` gap that the X11 path hit
+   first).
 1. ~~Crash-reporting pipeline~~ — **closed in v0.1.8** (`crates/lustlessd/src/crash.rs`
    with its nine tests, verified end to end: forced SIGABRT → `last-reason=SIGNAL`
    → next start reports `client_crash{crash_type=SIGNAL,count=1}`, the

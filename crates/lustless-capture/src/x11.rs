@@ -734,8 +734,10 @@ fn set_shm_mode(shmid: libc::c_int, mode: libc::mode_t) {
         // `shm_perm.mode` is c_ushort on glibc and c_uint on musl — widen to
         // u32 for the arithmetic, then narrow back to the field's per-libc
         // type (PACKAGING-MATRIX §1). On glibc both conversions are no-ops,
-        // which clippy flags; on musl they are required, so they stay.
-        #[allow(clippy::useless_conversion)]
+        // which clippy flags; on musl they are required, so they stay. On musl
+        // the narrowing is infallible (c_uint -> u32), which makes the `if let`
+        // irrefutable there and only there.
+        #[allow(clippy::useless_conversion, irrefutable_let_patterns)]
         {
             let cur = u32::from(ds.shm_perm.mode);
             if let Ok(mode) = ((cur & !0o777) | u32::from(mode)).try_into() {

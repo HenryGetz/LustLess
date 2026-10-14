@@ -35,6 +35,14 @@ Status vocabulary: **MUST/SHOULD/MAY** per RFC 2119.
 - Formatting/gates run **once per phase** by the orchestrator across the union of changed
   files (`cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`); component tasks edit
   only.
+- **PipeWire is reached through our own bindings, never a link dependency**
+  (v0.1.10, §7). `crates/lustless-capture/src/pipewire_sys.rs` `dlopen`s
+  `libpipewire-0.3.so.0` at runtime and resolves the entry points that exist in
+  both 0.3.48 (Zorin 17 / Ubuntu 22.04) and 1.0.x; no spa struct crosses the
+  boundary, so one build is correct on both. Consequences the build/packaging
+  must keep: no `libpipewire-0.3-dev` and no `libclang-dev` in the release
+  container, no `libpipewire`/`libspa` `DT_NEEDED` in any shipped binary, and
+  PipeWire declared as a *weak* dependency in the packages.
 
 ## 3. Crate graph and ownership
 
@@ -197,10 +205,16 @@ Manifest keys **verbatim** (screenstate schema 3.0.0, `capture-pipeline.md` §2)
   Gate on logind `LockedHint`/`Active`, screensaver state, classifier alive; **skip**
   capture entirely while locked/screensaver-active (improvement on CE's
   `saver_while_capture` telemetry, `91-linux-mapping.md` §1).
-- Backends: `auto` = X11 (`XShmGetImage` per RandR output) when `XDG_SESSION_TYPE=x11`,
-  Wayland portal ScreenCast (PipeWire) otherwise. Restricted/protected windows are
-  captured and flagged (`doNotScore: true` + `circumventions` row), never aborted
-  (`capture-pipeline.md` §3).
+- Backends: `auto` = X11 (`XShmGetImage` per RandR output) when the *session's* type is
+  x11, Wayland portal ScreenCast (PipeWire) otherwise. The session type and environment
+  come from logind (`Type`/`Display`/`Remote`/`Leader` in `crates/lustlessd/src/sessions.rs`),
+  never from the daemon's own environment — a system service has none. DISPLAY/XAUTHORITY
+  are recovered from the session leader's `/proc/<pid>/environ` when logind has no
+  `Display`. Text (`tty`) and remote sessions are never captured. The Wayland backend holds
+  one long-lived ScreenCast session and persists the per-user restore token
+  (`<state_dir>/<uid>/portal-restore-token`, 0600) so the compositor does not re-prompt on
+  every login. Restricted/protected windows are captured and flagged
+  (`doNotScore: true` + `circumventions` row), never aborted (`capture-pipeline.md` §3).
 - Classifier → daemon channel: JSON Lines on the child's stdout pipe; every message
   `{"type":…, "ts":…, …}`. Message types: `hello {version, model_ids}`, `result
   {batch_ts, windows[{app, title, rect, score, flagged}], summary{flagged, top_score,

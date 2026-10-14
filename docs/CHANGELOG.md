@@ -1,5 +1,77 @@
 # Changelog
 
+## v0.1.10 — Wayland capture ships (version-tolerant PipeWire bindings)
+
+Screen capture on a Wayland session (GNOME: Zorin Core, Ubuntu, Fedora) now uses
+the compositor's ScreenCast portal instead of falling back to X11/XWayland root
+capture. The backend existed since v0.1.7 but could not ship, and the reason was
+structural rather than a flag: the `pipewire` crate cannot build against the
+Zorin 17 / Ubuntu 22.04 baseline. Its `libspa` bindings need symbols and struct
+fields that do not exist in libspa 0.3.48 (`spa_meta_first`,
+`spa_meta_region_is_valid`, `spa_video_info_raw.flags`), and
+`struct spa_video_info_raw` *changed layout* between 0.3.48 and current PipeWire
+(`flags` inserted after `format`, `modifier` widened), so no single linked build
+could be correct on both 0.3.48 and 1.0.x — and one `.deb` has to cover both.
+
+- **Our own version-tolerant PipeWire bindings** replace the crate
+  (`crates/lustless-capture/src/pipewire_sys.rs`): `libpipewire-0.3.so.0` is
+  `dlopen`ed and the 25 entry points that exist in 0.3.48 *and* 1.0.x are
+  resolved at runtime. The two calls we need that are header macros
+  (`pw_core_get_registry`, `pw_registry_add_listener`) are reached through the
+  real `spa_interface` vtable — its layout and the `pw_core_methods` member
+  order were verified identical across 0.3.48, 1.0.5 and master. Event tables
+  carry trailing padding and the 0.3.x version so a newer library's copy stays
+  inside our allocation. **No spa struct ever crosses the boundary**: only
+  byte-level SPA pods do, which is what makes one build correct on both
+  baselines. Consequences: the release build needs neither `libpipewire-0.3-dev`
+  nor `libclang-dev`, no shipped binary has a `libpipewire`/`libspa`
+  `DT_NEEDED`, and the packages declare PipeWire as a weak dependency
+  (`Recommends`/`optdepends`) — absent PipeWire degrades to the X11 path
+  instead of failing to install.
+- **Our own SPA pod codec** (`pipewire_pod.rs`) replaces the crate's
+  `PodSerializer`/`VideoInfoRaw`: it builds the EnumFormat we negotiate and
+  parses the format the compositor picks, with every constant read from the
+  real headers and independently probed on 22.04 and 24.04 (all 24 print
+  identically).
+- **Backend fixes found while porting**: the stream no longer asks for
+  `PW_STREAM_FLAG_DRIVER` (wrong for a capture stream, and a way to get no
+  frames); frame extraction honours `chunk.offset`/`chunk.size`/`chunk.stride`
+  instead of assuming a packed stride, rejects DMA-BUF buffers with a log
+  instead of reading them, and **queues buffers back** (the old code leaked
+  every one); the PipeWire thread builds the whole graph itself instead of
+  taking a command channel.
+- **Portal permission persistence.** The ScreenCast restore token is stored per
+  user (`<state_dir>/<uid>/portal-restore-token`, 0600) and sent back with
+  `PersistMode`, so the compositor re-uses the grant instead of re-prompting on
+  every login. The portal session is opened on the *session* bus explicitly
+  (`Screencast::with_connection`), which is what a root system service needs.
+- **The daemon now chooses its backend from the logind session**, not from its
+  own environment. A system service has no session environment, so
+  `XDG_SESSION_TYPE` was always absent: an X11 desktop would have picked the
+  Wayland backend, and the X11 backend could not see `$DISPLAY` at all.
+  `sessions.rs` reads the session's `Type`/`Display`/`Remote`/`Leader` and
+  derives the environment (`DISPLAY`, `XAUTHORITY`, `XDG_RUNTIME_DIR`,
+  `DBUS_SESSION_BUS_ADDRESS`); text and remote sessions are never captured.
+- **X11 capture actually works now.** A live run showed the daemon resolving the
+  session correctly and then failing with `$DISPLAY variable not set`, because
+  logind's per-session `Display` property is empty on real machines (verified on
+  Ubuntu 24.04 and Zorin 17.3). DISPLAY/XAUTHORITY are recovered from the
+  session leader's `/proc/<pid>/environ`, then from a bounded walk of its
+  descendants, then from the ordered `XAUTHORITY` file probe — and only then
+  does an X11 session fall back to `:0`.
+
+Verification: 350 workspace tests pass and `clippy -D warnings` is clean; the
+FFI layer is covered by an integration test that compiles a stub
+`libpipewire-0.3.so.0` from the real headers and drives the wrappers end to end
+(registry vtable, pod negotiation, padded-stride extraction, buffer queueing),
+plus a test that resolves the real system library when one is installed. The
+build was verified in the `ubuntu:22.04` container *without* any PipeWire
+headers, and the resulting release binaries were checked for the absence of a
+`libpipewire` link dependency. Live VM evidence collected so far (daemon
+session resolution, classifier artifact loading) is in `docs/impl/TEST-MATRIX.md`;
+the remaining live step — a real compositor granting ScreenCast — is gap 0 in
+`docs/impl/PARITY.md`.
+
 ## v0.1.9 — hardening: local tamper, fail-open DNS, poisoned queues
 
 Two focused reviews (local attack surface, error paths) were run against the

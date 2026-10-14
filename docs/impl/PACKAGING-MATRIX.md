@@ -5,6 +5,20 @@ distro. Consumers: packaging build scripts (`packaging/build-*.sh`), the VM
 testbed (`packaging/testbed/`), and the acceptance runs. Filesystem layout stays
 `docs/impl/CONTRACTS.md` §4 (unchanged by this matrix).
 
+## PipeWire (runtime, weak)
+
+Wayland capture reaches PipeWire through a runtime `dlopen` of
+`libpipewire-0.3.so.0` (v0.1.10, `docs/impl/CONTRACTS.md` §2), so PipeWire is a
+**weak** dependency, never a hard one: the package installs and runs without it
+and falls back to X11/XWayland capture. Declared as `Recommends:
+libpipewire-0.3-0` (deb), `Recommends: libpipewire-0.3.so.0()(64bit)` (rpm) and
+`optdepends=('pipewire: ...')` (arch). The APK has no weak-dependency mechanism,
+so the Alpine package documents it here instead. Note that the release *build*
+needs no PipeWire headers at all (`libpipewire-0.3-dev` and `libclang-dev` were
+removed from `packaging/build-binaries.sh`), and no shipped binary carries a
+`libpipewire`/`libspa` `DT_NEEDED` — verified with `readelf -d` on all four
+binaries.
+
 ## 1. Target matrix
 
 | # | Distro (test target) | Base | libc | Package | Init | Desktop | Test VM (noVNC port) |
