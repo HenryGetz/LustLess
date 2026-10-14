@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.1.8 — crash-reporting pipeline (CE parity, minus the databases)
+
+The biggest remaining parity gap (`docs/impl/PARITY.md` gap 1) is closed:
+`crates/lustlessd/src/crash.rs` implements CE's crash flow with Linux
+mechanisms and the same observable behavior.
+
+- **Detection**: a clean-shutdown marker under `<state_dir>/crash/`. A missing
+  marker at startup means the previous run died — systemd's `Restart=always` is
+  CE's restart helper, so the report is produced by the next start (CE's
+  timing). A first-ever start reports nothing (CE's counters start clean).
+- **Type**: a panic hook plus fatal-signal handlers (SIGSEGV/SIGABRT/SIGBUS/
+  SIGILL/SIGFPE) write the reason, so the metric's `crash_type` is
+  `PANIC`/`SIGNAL` where CE hardcodes `GENERIC`; the handlers re-raise so the
+  exit status stays a signal.
+- **Attachments**: CE's log groups under CE's caps (5 MB per file, 19 MB
+  total). `state-summary.json` replaces CE's `debugDB.zip` — LustLess never
+  attaches the activity databases (`91-linux-mapping.md` §10, deliberately
+  stricter than CE).
+- **Counters + metric**: CE's `ClientCrashesAt`/`ClientCrashesSince` pair in
+  `install_metadata` (reset window = CE's `0x165a0bc00` ms), the
+  `client_crashes` telemetry row, and CE's
+  `client_crash{crash_type=…,count=…}` metrics event, cleared after reporting.
+- **Test hooks**: `--crashatonce=true` (CE's command-line switch) and
+  `[daemon] crash_test_hook = "force"` (CE's `ForceCrashClient` setting).
+- Verified end to end: forced SIGABRT → `last-reason=SIGNAL` → next start logs
+  `previous run crashed (SIGNAL, 1 in window)`, writes the attachments, emits
+  the metric row with `crash_type=SIGNAL`, inserts `client_crashes=SIGNAL:1`,
+  clears the counter; a clean run reports nothing (no false positives).
+- Package/CLI version `0.1.8`; installer release-pinned to `v0.1.8`.
+
 ## v0.1.7 — Wayland capture actually ships; spool survives resource limits
 
 Parity work driven by `docs/impl/PARITY.md` (a subsystem-by-subsystem audit

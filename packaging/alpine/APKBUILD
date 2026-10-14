@@ -6,7 +6,7 @@
 # refuses to run as root — see that script).
 
 pkgname=lustless
-pkgver=0.1.7
+pkgver=0.1.8
 pkgrel=0
 pkgdesc="Accountability client: screen accountability + DNS filtering (Linux edition)"
 url="https://github.com/HenryGetz/LustLess"

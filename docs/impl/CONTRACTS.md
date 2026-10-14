@@ -15,7 +15,7 @@ Status vocabulary: **MUST/SHOULD/MAY** per RFC 2119.
 | item | value |
 |---|---|
 | product / package | `lustless` |
-| version | `0.1.7` (semver; `.deb` version = same) |
+| version | `0.1.8` (semver; `.deb` version = same) |
 | components | `lustlessd` (system daemon), `lustless-classifier` (scoring process, daemon-spawned), `lustless-agent` (per-session tray + dashboard helper), `lustlessctl` (admin/diagnostics CLI) |
 | kernel components | none (CE's observable surface is pure user mode — `re/findings/01-dynamic-recon/live-surface.md` §a–§f) |
 | target OS | **Zorin OS 17 (Lite and Core), Ubuntu 24.04, Xubuntu 24.04, Lubuntu 24.04** and generic systemd Linux desktops. Built against glibc 2.35 (ubuntu:22.04 build container) so one `.deb` runs on both 22.04-base (Zorin 17) and 24.04-base systems. Desktop-shell reality to respect: GNOME (Ubuntu/Zorin Core — SNI via AppIndicator extension, on by default in Ubuntu), Xfce (Xubuntu/Zorin Lite — SNI via `xfce4-indicator-plugin`), LXQt (Lubuntu — no SNI host; agent MUST degrade gracefully, §13) |
@@ -378,6 +378,28 @@ report). Envelope per record:
 Auth: per-device credentials as revocable Bearer tokens (`device_token` in `api_credentials`);
 no account password is ever stored (`91-linux-mapping.md` §6). TLS with normal CA
 validation.
+
+### Crash reporting (`crates/lustlessd/src/crash.rs`)
+
+CE registers a BugSplat reporter that zips the client logs **and the SQLite
+databases**, uploads the report, bumps a telemetry crash counter and launches a
+restart helper; on the next successful start it reports the accumulated count as
+`client_crash{crash_type=GENERIC,count=N}` and clears it (`crash-reporting.md`
+§1–§5). LustLess keeps the observable half:
+
+- **detection** — a clean-shutdown marker under `<state_dir>/crash/`; absent at
+  startup ⇒ the previous run died (systemd's `Restart=always` is CE's restart
+  helper, so the report is made by the next start, CE's timing);
+- **type** — a panic hook plus fatal-signal handlers write the reason, so
+  `crash_type` is `PANIC`/`SIGNAL` rather than always `GENERIC`;
+- **attachments** — CE's log groups under CE's caps (5 MB per file, 19 MB
+  total, `ATTACH_FILE_CAP`/`ATTACH_TOTAL_CAP`); `state-summary.json` replaces
+  CE's `debugDB.zip` — **the activity databases are never attached**;
+- **counters** — CE's `ClientCrashesAt`/`ClientCrashesSince` pair in
+  `install_metadata` (window `CRASH_WINDOW_SECS` = CE's `0x165a0bc00` ms) plus
+  the `client_crashes` telemetry row;
+- **hooks** — `--crashatonce=true` (CE's command-line switch) and
+  `[daemon] crash_test_hook = "force"` (CE's `ForceCrashClient` setting).
 
 ## 11. Watchdog, tamper, uninstall
 

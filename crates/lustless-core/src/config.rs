@@ -46,6 +46,9 @@ pub struct DaemonConfig {
     pub dashboard_port: u16,
     /// Daemon state root (§4: `/var/lib/lustless`).
     pub state_dir: String,
+    /// Deliberate-crash hook for support/QA (CE's `ForceCrashClient` setting):
+    /// `"force"` aborts at startup through the §10 crash pipeline.
+    pub crash_test_hook: String,
 }
 
 impl Default for DaemonConfig {
@@ -55,6 +58,7 @@ impl Default for DaemonConfig {
             dashboard_enabled: true,
             dashboard_port: 8760,
             state_dir: "/var/lib/lustless".into(),
+            crash_test_hook: String::new(),
         }
     }
 }
@@ -216,6 +220,7 @@ const KNOWN_SECTIONS: &[(&str, &[&str])] = &[
             "dashboard_enabled",
             "dashboard_port",
             "state_dir",
+            "crash_test_hook",
         ],
     ),
     (

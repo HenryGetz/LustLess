@@ -1789,6 +1789,7 @@ version = "0.1.7"
 dependencies = [
  "flate2",
  "futures",
+ "libc",
  "lustless-capture",
  "lustless-core",
  "lustless-dns",

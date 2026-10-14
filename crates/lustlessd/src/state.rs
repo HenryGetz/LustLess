@@ -40,7 +40,7 @@ use tokio::sync::watch;
 
 use lustless_core::clock::{local_timezone_offset, ClockAnchor};
 use lustless_core::config::LustlessConfig;
-use lustless_core::db::{CircumventionRow, LoginRow, Outbox, SwitchUserRow};
+use lustless_core::db::{CircumventionRow, LoginRow, Outbox, SwitchUserRow, TelemetryRow};
 use lustless_core::ids;
 use lustless_core::metrics::{
     AggTag, Aggregation, BucketTag, MetricField, MetricName, MetricSink, OPERATION_AGGREGATE,
@@ -408,6 +408,30 @@ impl DaemonState {
         let handle = Arc::new(Mutex::new(db));
         guard(&self.settings).insert(uid, Arc::clone(&handle));
         Ok(handle)
+    }
+
+    /// Runs `f` against the shared outbox under its lock (§6.1). Callers that
+    /// need a multi-step transaction (the §10 crash counters) use this instead
+    /// of reaching for the private guard.
+    pub fn with_outbox<R>(&self, f: impl FnOnce(&mut Outbox) -> R) -> R {
+        let mut outbox = guard(&self.outbox);
+        f(&mut outbox)
+    }
+
+    /// Queues one §6.1 telemetry row (CE's `telemetry` store; §10 crash
+    /// counters ride here as `client_crashes`).
+    pub fn insert_telemetry(&self, row: TelemetryRow) -> Result<(), CoreError> {
+        self.with_outbox(|outbox| outbox.insert_telemetry(&row).map(|_| ()))
+    }
+
+    /// Human-readable device name for records/telemetry (§6.1
+    /// `device_name`): the kernel hostname, falling back to the per-install id.
+    pub fn device_name(&self) -> String {
+        std::fs::read_to_string("/proc/sys/kernel/hostname")
+            .map(|name| name.trim().to_string())
+            .ok()
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| self.device_id())
     }
 
     /// Per-install device id (`install_metadata`, §6.1), generated on first

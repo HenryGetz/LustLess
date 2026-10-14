@@ -1,6 +1,6 @@
 [package]
 name = "lustless-net"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 description = "Network services: REST uploader (outbox state machine), updater (signed feed), dashboard (axum) — docs/impl/CONTRACTS.md §10/§12/§13"
 license = "Apache-2.0"

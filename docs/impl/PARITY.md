@@ -21,7 +21,7 @@ documented deviation, **✗** gap (work named).
 | 7 | Watchdog / persistence / anti-tamper | ✓* | systemd `Restart=always` + `StartLimitIntervalSec=0` (a crash loop keeps DNS alive), logind-gated sessions, per-uid crash budget with CE's ≤3 escalation; *deviation*: no hidden `disable*Protection` exports — one audited polkit action |
 | 8 | UI | ✓ | GTK/AppIndicator tray with CE's menu vocabulary, notifications, dashboard in the browser; verified visually on Zorin OS 17.3 Lite (sign-in window, tray icon, menu entry) |
 | 9 | Updater | ✓* | JSON feed with `now|later|none` + `critical`, 24 h cadence, ed25519-verified payloads; *deviation*: installs the verified `.deb` rather than using a signed apt repo |
-| 10 | Crash reporting + diagnostics | ✗ | `lustlessctl collect-debug` bundles and per-uid crash counters exist; there is **no automatic crash collection/report pipeline** (no minidump/coredump capture, no crash route, no `crash_type`) — CE uploads three zips and a `client_crash{crash_type}` metric |
+| 10 | Crash reporting + diagnostics | ✓* | Automatic pipeline (`crates/lustlessd/src/crash.rs`, v0.1.8): crash detection via the clean-shutdown marker, `crash_type` from the panic/fatal-signal hooks, CE's log-group attachments under CE's caps, the `ClientCrashesAt/Since` counter pair, the `client_crashes` telemetry row, and CE's `client_crash{crash_type,count}` metric cleared after reporting; hooks `--crashatonce=true` / `crash_test_hook="force"`. *Deviation (stricter)*: the activity databases are never attached — `state-summary.json` replaces CE's `debugDB.zip` |
 | 11 | Packaging (Zorin OS) | ✓ | One staging tree → deb/rpm/arch/apk, lifecycle helper, hicolor icons, .desktop entries, polkit policy, browser policies; live-VM verified on Zorin Lite (and five other distros in `TEST-MATRIX.md`) |
 
 ## Remaining gaps, ranked
@@ -36,10 +36,14 @@ documented deviation, **✗** gap (work named).
    target. Work: version-tolerant PipeWire access (dlopen the ~15 spa entry
    points used, or a crate pin matching 0.3.48), then a live GNOME/Wayland
    verification of the portal grant and frame extraction.
-1. **Crash-reporting pipeline** (§10 above). Work: coredump/minidump
-   collection, a crash record type + route in `crates/lustless-net/src/uploader.rs`,
-   a report builder wired to `CrashStore` (`crates/lustlessd/src/classifier.rs`),
-   and `crash_type` on the existing `client_crash` metric.
+1. ~~Crash-reporting pipeline~~ — **closed in v0.1.8** (`crates/lustlessd/src/crash.rs`
+   with its nine tests, verified end to end: forced SIGABRT → `last-reason=SIGNAL`
+   → next start reports `client_crash{crash_type=SIGNAL,count=1}`, the
+   `client_crashes=SIGNAL:1` telemetry row, attachments with no database content,
+   and CE's counter pair cleared after reporting). Not yet attached to the
+   upload channel as a *file*: the recovered protocol has no attachment route
+   (CE used BugSplat), so the bundle stays local and is reported by
+   `lustlessctl collect-debug`.
 2. **Upload auth recovery.** A rotated/expired device token stalls uploads
    (`crates/lustless-net/src/uploader.rs` drops the cached token on 401 with
    no re-auth path) although the device key/secret are stored

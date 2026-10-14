@@ -1,6 +1,6 @@
 [package]
 name = "lustlessd"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 description = "LustLess system daemon: IPC server, session/policy state machine, capture loop + classifier supervision, DNS lifecycle (docs/impl/CONTRACTS.md §4–§14)"
 license = "Apache-2.0"
@@ -28,6 +28,10 @@ tracing.workspace = true
 rand.workspace = true
 time.workspace = true
 rusqlite.workspace = true
+
+# Fatal-signal handlers for the §10 crash pipeline (the panic hook alone
+# cannot record SIGSEGV/SIGABRT); pinned exactly like every other dependency.
+libc = "=0.2.190"
 
 # IPC peer credentials (`SO_PEERCRED` via `nix::sys::socket`, CONTRACTS §5) plus
 # the OS-user lookup used for the `logins` rows (`system_user_name`, §6.1).

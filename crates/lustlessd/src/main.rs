@@ -17,6 +17,7 @@
 //!    bounded outbox flush (§11 `prerm` shape) and a WAL checkpoint (§6.1).
 mod capture_loop;
 mod classifier;
+mod crash;
 mod diagnostics;
 mod dns_glue;
 mod ipc;
@@ -175,6 +176,20 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Outbox::open(&outbox_path(&cfg)).map_err(|err| format!("stage outbox_open: {err}"))?,
     ));
     let clock = Arc::new(RwLock::new(ClockAnchor::system()));
+    // §10 crash pipeline: the ledger decides whether the *previous* run died
+    // (a clean-shutdown marker is missing) before anything else is written.
+    // systemd's `Restart=always` is CE's restart helper, so the report is made
+    // by this start — CE's timing exactly.
+    let ledger = crash::CrashLedger::new(Path::new(&cfg.daemon.state_dir));
+    ledger.install_hooks();
+    std::env::set_var("LUSTLESS_CRASH_REASON", ledger.reason_path());
+    let previous_crash = ledger.begin();
+    // CE's `crashatonce=true` command-line switch / `ForceCrashClient` setting.
+    if crash::forced_crash_requested(&std::env::args().collect::<Vec<_>>(), &cfg.daemon.crash_test_hook)
+    {
+        crash::force_crash();
+    }
+
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let state = Arc::new(DaemonState::new(
         Arc::clone(&cfg),
@@ -193,6 +208,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         &[DaemonState::counter_field("startup_count", 1)],
     ) {
         tracing::warn!("client_startup metric failed: {err}");
+    }
+    // §10: report the crash the previous run left behind (metric with
+    // `crash_type`, telemetry row, sanitized attachments) and clear CE's
+    // counter pair afterwards.
+    if let Some(crash_type) = previous_crash {
+        report_previous_crash(&state, &ledger, crash_type);
     }
     tracing::info!(
         "lustlessd {} starting (state {})",
@@ -287,6 +308,80 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _ = tokio::time::timeout(Duration::from_secs(5), net_task).await;
     checkpoint_outbox(&outbox_path(&cfg));
 
+    // §10: a clean shutdown must not look like a crash on the next start.
+    ledger.mark_clean();
+
     tracing::info!("lustlessd stopped");
     Ok(())
+}
+
+/// §10 crash report for the previous run: CE reports accumulated crash counts
+/// as a `client_crash{crash_type,count}` metrics event at the next successful
+/// start, bumps the telemetry counter, attaches the log groups and clears the
+/// counter. The attachments never include the activity databases
+/// (`91-linux-mapping.md` §10).
+fn report_previous_crash(state: &DaemonState, ledger: &crash::CrashLedger, crash_type: crash::CrashType) {
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    let (count, crashes_at) = state.with_outbox(|outbox| ledger.bump(outbox, now));
+
+    // Sanitized state summary (replaces CE's `debugDB.zip`).
+    let summary = serde_json::json!({
+        "version": lustless_core::LUSTLESS_VERSION,
+        "crashes_at": crashes_at,
+        "crashes_since": count,
+        "crash_type": crash_type.as_str(),
+        "note": "LustLess never attaches the activity databases (CONTRACTS §10)",
+    })
+    .to_string();
+
+    let log_dir = std::path::PathBuf::from("/var/log/lustless");
+    let mut sources = Vec::new();
+    if log_dir.exists() {
+        sources.push(("debugLogs".to_string(), log_dir.clone()));
+    }
+    let classifier_logs = log_dir.join("classifier");
+    if classifier_logs.exists() {
+        sources.push(("debugClassLogs".to_string(), classifier_logs));
+    }
+    match ledger.collect_attachments(&sources, &summary) {
+        Ok(dir) => tracing::warn!(
+            "previous run crashed ({}, {} in window) — attachments in {}",
+            crash_type.as_str(),
+            count,
+            dir.display()
+        ),
+        Err(err) => tracing::warn!("crash attachments failed: {err}"),
+    }
+
+    // CE's `client_crash{crash_type=…, count=…}` metrics event.
+    let tag = lustless_core::metrics::AggTag {
+        aggregation: lustless_core::metrics::Aggregation::Cardinal,
+        name: "crash_type".to_string(),
+        value: crash_type.as_str().to_string(),
+    };
+    if let Err(err) = state.record_metric_tagged(
+        "",
+        lustless_core::metrics::MetricName::ClientCrash,
+        &[tag],
+        &[DaemonState::counter_field("crash_count", count as u64)],
+    ) {
+        tracing::warn!("client_crash metric failed: {err}");
+    }
+
+    // CE's telemetry crash counter (`updateProcessCrashes("client", +1)`).
+    let device = state.device_name();
+    let row = crash::telemetry_row(crash_type, count, &device);
+    if let Err(err) = state.insert_telemetry(row) {
+        tracing::warn!("client_crashes telemetry failed: {err}");
+    }
+
+    state.notify(
+        "error",
+        &format!(
+            "LustLess recovered from a crash ({}); diagnostics were collected",
+            crash_type.as_str()
+        ),
+        None,
+    );
+    state.with_outbox(|outbox| ledger.clear(outbox));
 }

@@ -1,6 +1,6 @@
 [package]
 name = "lustless-classifier"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 description = "LustLess screenstate classifier: spool consumer, CE ensemble scoring engine, bundle manager"
 license = "Apache-2.0"
