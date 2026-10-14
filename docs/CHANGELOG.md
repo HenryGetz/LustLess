@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.1.7 — Wayland capture actually ships; spool survives resource limits
+
+Parity work driven by `docs/impl/PARITY.md` (a subsystem-by-subsystem audit
+against the Windows client, with the remaining gaps named and ranked).
+
+- **Wayland capture: the gap is now understood exactly, not papered over.**
+  Shipped builds compile out `wayland-portal`, so on a Wayland session (GNOME —
+  Zorin Core, Ubuntu, Fedora) capture falls back to X11/XWayland root. Enabling
+  it in the build does **not** work on this baseline: the `pipewire` crate's
+  `spa_sys` bindings need a libspa newer than Ubuntu 22.04 / Zorin 17 ships
+  (0.3.48) — the build fails (`spa_meta_first`, `spa_video_info_raw.flags`) and
+  a binary linked against a newer libspa would not load on the target at all.
+  Closing it needs version-tolerant (dlopen) PipeWire bindings or a crate pin
+  matching 0.3.48; recorded as gap #1 in `docs/impl/PARITY.md`.
+- **The spool consumer survives a missing inotify instance.** When the
+  per-user inotify instance limit is exhausted, `SpoolWatcher::open` failed and
+  the classifier exited (`spool consumer init failed … Too many open files`).
+  It now falls back to polling with identical semantics — new ready folders
+  only, and renames still classified as `Renamed` via the folder inode — so
+  capture/scoring keeps working in containers and on machines with low limits.
+- Verified with the **real CE model bundle**: decrypt → load (threshold 0.467
+  from the calibration artifact) → score a 640×480 capture →
+  `{"app":"firefox","score":0.0,"flagged":false,"scored_windows":1}`.
+- `docs/impl/PARITY.md`: status of all eleven subsystems with evidence, plus
+  the ranked remaining gaps (crash-reporting pipeline, upload re-auth,
+  silent-upgrade grace flag, the unused `disable-protection` action).
+- Package/CLI version `0.1.7`; installer release-pinned to `v0.1.7`.
+
 ## v0.1.6 — branded sign-in window, verified on Zorin OS Lite
 
 - **The sign-in window shows the CE shield**: the real artwork (88×94, from

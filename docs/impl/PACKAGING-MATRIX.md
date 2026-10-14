@@ -38,10 +38,10 @@ with `*.rpm`, `*.pkg.tar.zst`, `*.apk`):
 
 | Format | File name | Builder |
 |---|---|---|
-| deb | `lustless_0.1.6_amd64.deb` | `packaging/build-deb.sh` |
-| rpm | `lustless-0.1.6-1.x86_64.rpm` | `packaging/build-rpm.sh` |
-| Arch | `lustless-0.1.6-1-x86_64.pkg.tar.zst` | `packaging/build-arch.sh` |
-| apk | `lustless-0.1.6-r0.apk` | `packaging/build-apk.sh` |
+| deb | `lustless_0.1.7_amd64.deb` | `packaging/build-deb.sh` |
+| rpm | `lustless-0.1.7-1.x86_64.rpm` | `packaging/build-rpm.sh` |
+| Arch | `lustless-0.1.7-1-x86_64.pkg.tar.zst` | `packaging/build-arch.sh` |
+| apk | `lustless-0.1.7-r0.apk` | `packaging/build-apk.sh` |
 
 The apk is **signed** with a project RSA key (`target/apk-key/`, gitignored;
 the matching `lustless.rsa.pub` is emitted at the repo root and MUST ship
@@ -50,7 +50,7 @@ also works). It is assembled directly (control/data/signature streams
 mirroring abuild's own byte layout) because abuild's mandatory fakeroot
 packaging step crashes in container kernels without full fakeroot support.
 
-Version stays `0.1.6` (matches the Cargo workspace). Package name is `lustless`
+Version stays `0.1.7` (matches the Cargo workspace). Package name is `lustless`
 everywhere.
 
 **Smart-build rule:** one staging tree is the single source of truth

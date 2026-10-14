@@ -63,6 +63,15 @@ fi
 "$CARGO_HOME/bin/rustup" default stable
 export PATH="$CARGO_HOME/bin:$PATH"
 rustc --version
+# Wayland portal capture stays OUT of the shipped binaries: the `pipewire`
+# crate's spa_sys bindings need a libspa newer than the Ubuntu 22.04 / Zorin 17
+# baseline provides (0.3.48) — it fails to build here, and a binary linked
+# against a newer libspa would not load on the target at all. The backend is
+# implemented (`crates/lustless-capture/src/wayland.rs`, `wayland-portal`
+# feature, builds with `LUSTLESS_WAYLAND=1` on a newer toolchain) and the
+# capture dispatcher logs the X11/XWayland fallback on Wayland sessions.
+# Closing this is a real work item (dlopen-style version-tolerant PipeWire
+# bindings, or a crate pin that matches 0.3.48) — see docs/impl/PARITY.md.
 if [ "${LUSTLESS_WAYLAND:-0}" = "1" ]; then
     cargo build --release
 else
@@ -84,7 +93,7 @@ apk add --no-cache build-base cargo rust sqlite-dev openssl-dev \
 export PATH="$CARGO_HOME_HOST/bin:$PATH"
 rustc --version
 cargo --version
-# Same feature set as the glibc baseline: no Wayland portal backend.
+# Same feature set as the glibc baseline (see the note above): no portal.
 cargo build --release --no-default-features
 DOCKER_EOF
 fi

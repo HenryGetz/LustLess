@@ -79,12 +79,12 @@ Prefer to pick the file yourself? Match distro to package:
 
 | Distro | File | Command |
 |---|---|---|
-| Debian / Ubuntu / Zorin / Mint | `lustless_0.1.6_amd64.deb` | `sudo apt install ./lustless_0.1.6_amd64.deb` |
-| Fedora | `lustless-0.1.6-1.x86_64.rpm` | `sudo dnf install ./lustless-0.1.6-1.x86_64.rpm` |
-| Bazzite / immutable Fedora | `lustless-0.1.6-1.x86_64.rpm` | `sudo rpm-ostree install ./lustless-0.1.6-1.x86_64.rpm` && reboot |
-| Arch / EndeavourOS | `lustless-0.1.6-1-x86_64.pkg.tar.zst` | `sudo pacman -U ./lustless-0.1.6-1-x86_64.pkg.tar.zst` |
-| Alpine | `lustless-0.1.6-r0.apk` | `sudo cp lustless.rsa.pub /etc/apk/keys/ && sudo apk add --allow-untrusted ./lustless-0.1.6-r0.apk` |
-| SteamOS | `lustless-0.1.6-1-x86_64.pkg.tar.zst` | `steamos-readonly disable && sudo pacman -U ./lustless-0.1.6-1-x86_64.pkg.tar.zst && steamos-readonly enable` |
+| Debian / Ubuntu / Zorin / Mint | `lustless_0.1.7_amd64.deb` | `sudo apt install ./lustless_0.1.7_amd64.deb` |
+| Fedora | `lustless-0.1.7-1.x86_64.rpm` | `sudo dnf install ./lustless-0.1.7-1.x86_64.rpm` |
+| Bazzite / immutable Fedora | `lustless-0.1.7-1.x86_64.rpm` | `sudo rpm-ostree install ./lustless-0.1.7-1.x86_64.rpm` && reboot |
+| Arch / EndeavourOS | `lustless-0.1.7-1-x86_64.pkg.tar.zst` | `sudo pacman -U ./lustless-0.1.7-1-x86_64.pkg.tar.zst` |
+| Alpine | `lustless-0.1.7-r0.apk` | `sudo cp lustless.rsa.pub /etc/apk/keys/ && sudo apk add --allow-untrusted ./lustless-0.1.7-r0.apk` |
+| SteamOS | `lustless-0.1.7-1-x86_64.pkg.tar.zst` | `steamos-readonly disable && sudo pacman -U ./lustless-0.1.7-1-x86_64.pkg.tar.zst && steamos-readonly enable` |
 
 Everything above is on the [latest release][rel]. Or run
 `sudo sh scripts/install.sh` from a checkout.

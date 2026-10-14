@@ -338,10 +338,18 @@ enum Watched {
 /// transactions and records tamper on their removal/rename.
 pub struct SpoolWatcher {
     root: PathBuf,
-    inode: Inotify,
+    /// `None` = polling mode: no inotify instance was available (the per-user
+    /// instance limit is exhausted, or the kernel refuses one). The pipeline
+    /// must keep working — a capture product that stops consuming because a
+    /// watch could not be registered is worse than a 1 s wake-up.
+    inode: Option<Inotify>,
     watches: HashMap<WatchDescriptor, Watched>,
     /// Ready folders not (yet) consumed by this process.
     pending: HashSet<PathBuf>,
+    /// Inode per pending folder, recorded when it is adopted. The polling
+    /// fallback uses it to tell a rename (same inode, new name) from a removal
+    /// — after the fact the original path no longer exists to stat.
+    pending_inos: HashMap<PathBuf, u64>,
     tamper: Vec<TamperEvent>,
 }
 
@@ -356,24 +364,43 @@ impl SpoolWatcher {
             .mode(0o700)
             .create(&root)
             .map_err(|e| io_err(&root, e))?;
-        let inode = Inotify::init().map_err(|e| io_err(&root, e))?;
-        let mask = WatchMask::CREATE
-            | WatchMask::DELETE
-            | WatchMask::MOVED_FROM
-            | WatchMask::MOVED_TO
-            | WatchMask::DELETE_SELF
-            | WatchMask::MOVE_SELF;
-        let root_wd = inode
-            .watches()
-            .add(&root, mask)
-            .map_err(|e| io_err(&root, e))?;
+        let inode = match Inotify::init() {
+            Ok(inode) => {
+                let mask = WatchMask::CREATE
+                    | WatchMask::DELETE
+                    | WatchMask::MOVED_FROM
+                    | WatchMask::MOVED_TO
+                    | WatchMask::DELETE_SELF
+                    | WatchMask::MOVE_SELF;
+                let root_wd = inode
+                    .watches()
+                    .add(&root, mask)
+                    .map_err(|e| io_err(&root, e))?;
+                Some((inode, root_wd))
+            }
+            Err(err) => {
+                log::warn!(
+                    "spool: inotify unavailable at {} ({err}); polling for ready \
+                     transactions instead",
+                    root.display()
+                );
+                None
+            }
+        };
         let mut watches = HashMap::new();
-        watches.insert(root_wd, Watched::Root);
+        let (inode, _) = match inode {
+            Some((inode, root_wd)) => {
+                watches.insert(root_wd, Watched::Root);
+                (Some(inode), ())
+            }
+            None => (None, ()),
+        };
         let mut watcher = Self {
             root,
             inode,
             watches,
             pending: HashSet::new(),
+            pending_inos: HashMap::new(),
             tamper: Vec::new(),
         };
         // Adopt transaction folders created before this watcher existed.
@@ -403,6 +430,9 @@ impl SpoolWatcher {
             let path = entry.path();
             if path.is_dir() && path.join(READY_MARKER).exists() {
                 self.pending.insert(path.clone());
+                if let Some(ino) = folder_inode(&path) {
+                    self.pending_inos.insert(path.clone(), ino);
+                }
                 ready.push(path);
             }
         }
@@ -420,6 +450,7 @@ impl SpoolWatcher {
     /// reported as tamper.
     pub fn mark_consumed(&mut self, path: &Path) {
         self.pending.remove(path);
+        self.pending_inos.remove(path);
         self.retire_watch(path);
     }
 
@@ -427,15 +458,56 @@ impl SpoolWatcher {
     /// elapses. Returns the folders observed ready during this call (plus, on the first call,
     /// any adopted via [`SpoolWatcher::scan_ready`]).
     pub fn wait_ready(&mut self, timeout: Duration) -> Result<Vec<PathBuf>, SpoolError> {
+        if self.inode.is_none() {
+            // Polling fallback: same semantics with a coarser wake-up. Only
+            // folders that became ready during this wait are returned (so a
+            // consumer never sees the same transaction twice), and a pending
+            // folder that vanished is the same tamper the inotify path reports
+            // from its delete/rename events.
+            // The inode identifies a transaction folder across a rename, so
+            // "disappeared" can still be classified as CE's Renamed vs Removed.
+            let before: HashSet<PathBuf> = self.pending.clone();
+            std::thread::sleep(timeout);
+            let mut ready = self.scan_ready();
+            ready.retain(|path| !before.contains(path));
+            let gone: Vec<PathBuf> = before.iter().filter(|path| !path.exists()).cloned().collect();
+            if !gone.is_empty() {
+                let live: HashMap<u64, PathBuf> = fs::read_dir(&self.root)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter_map(|entry| {
+                        let path = entry.path();
+                        (path.is_dir())
+                            .then(|| folder_inode(&path).map(|ino| (ino, path.clone())))
+                            .flatten()
+                    })
+                    .collect();
+                for path in gone {
+                    self.pending.remove(&path);
+                    let kind = self
+                        .pending_inos
+                        .remove(&path)
+                        .and_then(|ino| live.get(&ino))
+                        .map(|_| TamperKind::Renamed)
+                        .unwrap_or(TamperKind::Removed);
+                    self.record_tamper(kind, path);
+                }
+            }
+            return Ok(ready);
+        }
         let mut ready = Vec::new();
         let deadline = Instant::now() + timeout;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            if !poll_readable(self.inode.as_raw_fd(), remaining) {
+            let Some(inode) = self.inode.as_mut() else {
+                break;
+            };
+            if !poll_readable(inode.as_raw_fd(), remaining) {
                 break;
             }
             let mut buf = [0u8; 8192];
-            match self.inode.read_events(&mut buf) {
+            match inode.read_events(&mut buf) {
                 Ok(events) => {
                     for event in events {
                         self.handle_event(&event, &mut ready);
@@ -522,7 +594,14 @@ impl SpoolWatcher {
         }
         let mask =
             WatchMask::CREATE | WatchMask::DELETE | WatchMask::MOVED_FROM | WatchMask::MOVED_TO;
-        let Ok(wd) = self.inode.watches().add(&path, mask) else {
+        let Some(inode) = self.inode.as_ref() else {
+            // Polling mode: no per-folder watches to register.
+            if path.join(READY_MARKER).exists() {
+                self.pending.insert(path.clone());
+            }
+            return;
+        };
+        let Ok(wd) = inode.watches().add(&path, mask) else {
             return;
         };
         if path.join(READY_MARKER).exists() {
@@ -541,10 +620,19 @@ impl SpoolWatcher {
             })
             .collect();
         for wd in stale {
-            let _ = self.inode.watches().remove(wd.clone());
+            if let Some(inode) = self.inode.as_ref() {
+                let _ = inode.watches().remove(wd.clone());
+            }
             self.watches.remove(&wd);
         }
     }
+}
+
+/// Inode of a transaction folder (used by the polling fallback to tell a
+/// rename from a removal).
+fn folder_inode(path: &Path) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt as _;
+    fs::metadata(path).ok().map(|meta| meta.ino())
 }
 
 /// Wait until `fd` is readable or `timeout` elapses. `timeout == 0` polls once.
