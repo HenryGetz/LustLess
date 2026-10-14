@@ -197,3 +197,26 @@ what is *outstanding*.
 | Classifier readiness | **✔ live** — same VM: `classifier v0.1.10 ready`, all six CE artifacts loaded (`b1/b2/b3-scorer`, `sw-labels`, `calibration`, `mn`), `threshold 0.467 (calibration artifact), input 224x224` |
 | Portal ScreenCast grant + real frame extraction | **✘ not yet observed.** Both testbed images ship `WaylandEnable=false` in `/etc/gdm3/custom.conf`, so GDM never offers a Wayland session (no session chooser on the login screen, and `XSession=...-wayland` is ignored). Undoing that (comment the line, disable the X11 `xsessions` entries, set the session in AccountsService — done on the Ubuntu VM) is necessary but was not sufficient within this session: the VM console (VNC + the QEMU monitor `sendkey` path) could not get a shell to run the harness. The harness for the run is committed and self-contained in `packaging/testbed/wayland-verify/`: `serve.py` (serves the docroot on the guest's gateway address and records POSTed reports), `wayland-switch.sh` (comments out GDM's `WaylandEnable=false`, disables the X11 `xsessions` entries, sets the AccountsService `Session`/`XSession`), `prep.sh` (install the .deb, switch to offline mode, restart, sign in) and `cap.sh` (wait for a tick, then dump spool, manifest, restore token and the daemon log). Drive the VM with `target/testbed/qmon.sh <container> text '<command>'` — one monitor connection per call, because QEMU echoes per keystroke and a connection per character garbles the line (that was the failure mode of the first attempts). |
 | X11 capture on a real desktop | **✘ not yet observed** for the same reason (the session was X11 but no shell could be driven to install/sign-in and let a tick run). The DISPLAY defect above was found from the daemon's own log during the run, which is what that log is there for |
+
+## Screen capture on a real machine (v0.1.11)
+
+Run on the dev workstation itself — a real X11 desktop (`Type=x11`,
+`Display=:0`, session `c2`, active) with **five ssh/tty sessions for the same
+uid**, which is what made two of these bugs visible. The daemon ran as an
+unprivileged user with a test config (`/tmp/llvm4`: DNS off, offline mode,
+state under `/tmp`), so nothing on the machine was touched.
+
+| Step | Observed |
+|---|---|
+| Session tracking with an ssh session present | `logind: tracking 6 existing session(s)`; the *graphical* session is selected, not a tty one |
+| Gate | passes — before the fix this was `session inactive` on every tick |
+| Session environment | `capture: session env applied (uid 1000, type X11, display Some(":0"))` |
+| Backend | `capture: backend selected (X11)` |
+| Frame | `im0.png`, 1280×800, 3069 distinct colours (real desktop content, not a blank frame) |
+| Transaction | complete: `im0.png` + `manifest.json` + `ready` marker; `client_screenshot` metric row in the daemon's ledger |
+| Classifier | consumed the transaction; `{"batch_ts":"2026-10-14T19:51:28Z","analyzed_count":1,"flagged":0,"top_score":0.06666}` |
+
+Before these fixes the same run produced: sessions discovered after startup never
+registered (so `session inactive` forever), an ssh tty session selected over the
+desktop, and — once a capture *did* succeed — `analyzed_count: 0` because the
+manifest carried `apps: []`.

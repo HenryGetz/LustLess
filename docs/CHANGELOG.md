@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.1.11 — screen accountability actually captures and scores
+
+v0.1.10 shipped the Wayland backend but **screen capture did not work at all** on
+a real machine, on either backend. Three bugs, all found by running the daemon
+on a real X11 desktop rather than a VM, plus one that made a working capture
+score nothing:
+
+- **Sessions discovered after startup were silently dropped.** logind's `User`
+  property is the struct `(uo)`; the watcher read it as a bare `u32`, so the read
+  always failed and `watch_session` returned early. Sessions present at daemon
+  start come from `ListSessions` (which already carries the uid) and were fine —
+  but every session created *after* that arrives via the `SessionNew` signal and
+  needs the property. On a normal boot the daemon starts before anyone logs in,
+  so **every** session was dropped and capture skipped every tick as "session
+  inactive" forever. Fixed by reading the struct, with a regression test that
+  reads the property off real logind and pins the old shape as failing.
+- **An ssh session could shadow the desktop.** Session selection ranked by
+  liveness only, so on any machine the operator was also ssh'd into, the tty
+  session won and the capture path then refused it as a text session. Selection
+  now prefers a local graphical session (x11/wayland, not remote) first.
+- **The gate and the backend could disagree.** `gate()` allowed a tick if *any*
+  session for the uid was active+unlocked, while the backend captured the
+  session selection picked. Both now judge the same session.
+- **A capture with no window list was never scored.** When the X11 backend could
+  not read `_NET_CLIENT_LIST` it wrote `apps: []` and only logged a warning
+  claiming a full-frame fallback that did not exist. The classifier scores the
+  apps in the manifest, so every capture was analyzed as zero windows — the
+  daemon looked perfectly healthy while doing nothing. It now synthesizes one
+  full-frame entry per monitor, as the Wayland backend always has.
+- Capture failure is no longer silent: "no session tracked for a signed-in uid"
+  is a warning naming the defect, not an indistinguishable "session inactive".
+
+Verified on a real X11 session (`Display=:0`, `Type=x11`, alongside five ssh
+sessions for the same uid): `session env applied (uid 1000, type X11, display
+Some(":0"))` → `backend selected (X11)` → a real 1280×800 capture with 3069
+distinct colours, written as a complete spool transaction (PNG + manifest +
+`ready`), consumed by the classifier, and scored:
+`{"analyzed_count":1,"top_score":0.06666}`. The `client_screenshot` metric row
+in the daemon's ledger corroborates the write.
+
 ## v0.1.10 — Wayland capture ships (version-tolerant PipeWire bindings)
 
 Screen capture on a Wayland session (GNOME: Zorin Core, Ubuntu, Fedora) now uses

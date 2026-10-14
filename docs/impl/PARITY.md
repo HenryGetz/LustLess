@@ -12,7 +12,7 @@ documented deviation, **✗** gap (work named).
 
 | # | Subsystem | Status | Evidence (code / test / run) |
 |---|---|---|---|
-| 1 | Screen capture + screenstate pipeline | ✓* | **Both** backends ship (v0.1.10): X11 MIT-SHM and the Wayland portal + PipeWire backend. The PipeWire side runs on our own version-tolerant bindings (`capture/src/pipewire_sys.rs`, dlopen — no link dependency, no libpipewire headers at build time) with our own SPA pod codec (`capture/src/pipewire_pod.rs`); all 24 pod constants print identically on 22.04 and 24.04, all 25 dlsym'd symbols resolve against the real 1.0.5 library (`load_resolves_the_system_library_when_pipewire_is_installed`), the release build needs neither `libpipewire-0.3-dev` nor `libclang-dev`, and no shipped binary carries a `libpipewire`/`libspa` `DT_NEEDED`. The FFI contract is exercised end to end against a stub `libpipewire-0.3.so.0` built from the real headers (`tests/pipewire_sys_fake.rs`: registry vtable, `restricted` via the real `spa_dict`, format-pod negotiation, padded-stride frame extraction, buffer queueing). *Deviation*: **no capture has ever been observed end-to-end**, on either backend — the portal grant is unverified (gap 0) and the one live run never cleared the daemon's logind session gate (gap 1). Both backends share the verified file-transaction handoff, ready marker, jittered cadence and the CE retry ladder (`capture/src/{spool,manifest,scheduler}.rs`, tests `jitter_stays_within_uniform_bounds`, `retry_ladder_matches_ce_table`); tamper rows for removed/renamed transactions ✓ |
+| 1 | Screen capture + screenstate pipeline | ✓* | **Both** backends ship (v0.1.10): X11 MIT-SHM and the Wayland portal + PipeWire backend. The PipeWire side runs on our own version-tolerant bindings (`capture/src/pipewire_sys.rs`, dlopen — no link dependency, no libpipewire headers at build time) with our own SPA pod codec (`capture/src/pipewire_pod.rs`); all 24 pod constants print identically on 22.04 and 24.04, all 25 dlsym'd symbols resolve against the real 1.0.5 library (`load_resolves_the_system_library_when_pipewire_is_installed`), the release build needs neither `libpipewire-0.3-dev` nor `libclang-dev`, and no shipped binary carries a `libpipewire`/`libspa` `DT_NEEDED`. The FFI contract is exercised end to end against a stub `libpipewire-0.3.so.0` built from the real headers (`tests/pipewire_sys_fake.rs`: registry vtable, `restricted` via the real `spa_dict`, format-pod negotiation, padded-stride frame extraction, buffer queueing). *Deviation*: the X11 path is verified end to end on a real machine (gap 1 closed in v0.1.11); the Wayland portal grant is still unverified (gap 0). Both backends share the verified file-transaction handoff, ready marker, jittered cadence and the CE retry ladder (`capture/src/{spool,manifest,scheduler}.rs`, tests `jitter_stays_within_uniform_bounds`, `retry_ladder_matches_ce_table`); tamper rows for removed/renamed transactions ✓ |
 | 2 | Classifier (on-device ML) | ✓ | Real CE bundle decrypts, loads and **scores** — verified end to end on a synthetic 640×480 transaction: `{"app":"firefox","score":0.0,"flagged":false,"scored_windows":1}` with `threshold 0.467` from the calibration artifact and all six artifacts (`b1/b2/b3-scorer`, `sw-labels`, `mn`) loaded; `doNotScore` windows skipped (`classifier/src/consumer.rs`) |
 | 3 | DNS/URL filtering | ✓* | Forwarder on 127.0.0.2 with dual resolution, RPZ-style synthetic blocks, block page, browser DoH-lockdown policies; *deviation*: shipped upstream is a CleanBrowsing-family endpoint (open item 5 — redistribution terms) |
 | 4 | Local IPC + dashboard | ✓* | Unix socket + `SO_PEERCRED` replaces CE's unauthenticated TCP 48867; the 1-byte code + payload vocabulary is kept; token-authenticated dashboard (401 anonymous, verified) |
@@ -44,19 +44,29 @@ documented deviation, **✗** gap (work named).
    `TEST-MATRIX.md` (the daemon resolving the *session's* kind, the classifier
    loading all six CE artifacts, the logind `Display` gap that the X11 path hit
    first).
-1. **Screen capture has never produced a screenstate on a real desktop.** In the
-   one live installation that reached a running daemon with a signed-in policy and
-   a ready classifier (Ubuntu 24.04, 0.1.10), every tick logged
-   `Skip capturing Screenstate (session inactive)` while `loginctl` reported the
-   session `Active=yes`. The daemon's own registry (`sessions.rs::gate`) returns
-   `SessionInactive` when it holds no *active* entry for the uid, so either its
-   per-session property reads did not populate `active`/`uid` as expected or it
-   never learned about the session at all; the separate `session_gate` in
-   `scheduler.rs` has the same failure shape. This was **not** introduced by
-   v0.1.10 (the gate is older), but v0.1.10's session-environment work touches
-   exactly that watcher, so it needs re-checking with the fix. Until it is fixed,
-   screen accountability does nothing on a real machine — this is the most
-   important open item in this file, ahead of gap 0.
+1. ~~Screen capture never produced a screenstate~~ — **closed in v0.1.11**
+   (three bugs, all found and fixed on a real machine). (a) logind's `User`
+   property is the struct `(uo)`, but the session watcher read it as a bare
+   `u32`, so the read always failed and every session discovered through the
+   `SessionNew` signal was dropped — i.e. every session created after the daemon
+   starts, which on a normal boot is all of them, since the daemon starts before
+   anyone logs in. Capture then skipped every tick as "session inactive"
+   forever. (b) Session selection ranked only by liveness, so an ssh/tty session
+   for the same uid shadowed the desktop and the backend then refused a text
+   session. (c) The gate judged "any active session" rather than the session
+   that would actually be captured, so the two could disagree. Verified end to
+   end on the dev machine's real X11 session (`Display=:0`): session tracked →
+   gate passes → `session env applied (uid 1000, type X11, display Some(":0"))`
+   → `backend selected (X11)` → a real 1280×800 capture (3069 distinct colours)
+   written as a complete spool transaction (PNG + manifest + `ready`) → consumed
+   by the classifier → `analyzed_count: 1, top_score: 0.06666`. The
+   `client_screenshot` metric row in the daemon's ledger confirms the write.
+4. **A capture with no readable window list was never scored.** The X11 backend
+   emitted `apps: []` when it could not read `_NET_CLIENT_LIST`, and the
+   classifier scores the *apps* in the manifest, so every capture was analyzed
+   as zero windows — the daemon looked healthy while screen accountability did
+   nothing (the live result was `analyzed_count: 0`). It now synthesizes one
+   full-frame entry per monitor, exactly as the Wayland backend always has.
 2. ~~Crash-reporting pipeline~~ — **closed in v0.1.8** (`crates/lustlessd/src/crash.rs`
    with its nine tests, verified end to end: forced SIGABRT → `last-reason=SIGNAL`
    → next start reports `client_crash{crash_type=SIGNAL,count=1}`, the

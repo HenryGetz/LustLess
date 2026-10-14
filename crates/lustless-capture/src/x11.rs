@@ -709,16 +709,40 @@ impl CaptureBackend for X11Backend {
                 ));
             }
             capture.apps = self.list_windows();
-            if capture.apps.is_empty() && !self.fallback_logged {
-                self.fallback_logged = true;
-                log::warn!(
-                    "capture: no EWMH client list on this display; manifest apps[] is empty \
-                     (classifier falls back to full-frame scoring)"
-                );
+            if capture.apps.is_empty() {
+                capture.apps = synthetic_apps(&capture.monitors);
+                if !self.fallback_logged {
+                    self.fallback_logged = true;
+                    log::warn!(
+                        "capture: no EWMH client list on this display; scoring the full frame \
+                         (one synthetic entry per monitor, as the Wayland backend does)"
+                    );
+                }
             }
             Ok(capture)
         })
     }
+}
+
+/// One synthetic full-frame app entry per monitor, for a session whose window
+/// list we cannot read.
+///
+/// The classifier scores the *apps* in the manifest, so an empty list means a
+/// capture is analyzed as zero windows: the daemon looks healthy, writes and
+/// consumes transactions, and screen accountability does nothing. Verified on a
+/// real X11 session — the result was `analyzed_count: 0` until this fallback
+/// existed. Wayland has no window list at all and has always done this.
+fn synthetic_apps(monitors: &[CapturedMonitor]) -> Vec<CapturedApp> {
+    monitors
+        .iter()
+        .enumerate()
+        .map(|(index, monitor)| CapturedApp {
+            name: format!("x11-output-{index}"),
+            window_title: String::new(),
+            app_rect: monitor.rect,
+            do_not_score: monitor.restricted,
+        })
+        .collect()
 }
 
 fn shm_fail(step: &str, e: impl std::fmt::Display) -> CaptureError {
@@ -863,6 +887,31 @@ pub fn open(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_unreadable_window_list_still_produces_scorable_entries() {
+        let monitors = vec![
+            CapturedMonitor {
+                index: 0,
+                rect: [0, 0, 1280, 800],
+                image: image::RgbImage::new(1, 1),
+                restricted: false,
+            },
+            CapturedMonitor {
+                index: 1,
+                rect: [1280, 0, 1024, 768],
+                image: image::RgbImage::new(1, 1),
+                restricted: true,
+            },
+        ];
+        let apps = synthetic_apps(&monitors);
+        assert_eq!(apps.len(), 2, "one entry per monitor");
+        assert_eq!(apps[0].app_rect, [0, 0, 1280, 800]);
+        assert_eq!(apps[1].app_rect, [1280, 0, 1024, 768]);
+        assert!(!apps[0].do_not_score);
+        assert!(apps[1].do_not_score, "a restricted monitor stays flagged");
+        assert!(apps.iter().all(|app| !app.name.is_empty()));
+    }
+
     use super::*;
 
     #[test]

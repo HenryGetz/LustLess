@@ -173,7 +173,21 @@ async fn tick(
     // §13/§7 logind gates.
     if let Some(reason) = registry.gate(uid) {
         state.set_capture_active(false);
-        tracing::info!("Skip capturing Screenstate ({reason})");
+        // The interesting case is not "the session is locked/idle", it is "this
+        // registry does not know the signed-in uid at all": then screen
+        // accountability is silently doing nothing, which is a defect (logind
+        // tracking or session registration broke) rather than a routine skip.
+        // This distinction is what took a live run to untangle, so say it out
+        // loud instead of logging the same "session inactive" either way.
+        if registry.tracked_for_uid(uid) == 0 {
+            tracing::warn!(
+                "capture: no logind session is tracked for uid {uid} while a user is signed in — \
+                 screen accountability is NOT capturing (logind tracking or session registration \
+                 is broken)"
+            );
+        } else {
+            tracing::info!("Skip capturing Screenstate ({reason})");
+        }
         return GATE_RETRY;
     }
     // §7 screensaver gate.

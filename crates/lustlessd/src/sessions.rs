@@ -447,14 +447,23 @@ impl SessionRegistry {
     /// Deterministic: ties are broken by session object path, since the
     /// registry is a map. `None` when the uid has no tracked session.
     pub fn session_for_uid(&self, uid: u32) -> Option<SessionEntry> {
-        fn rank(entry: &SessionEntry) -> u8 {
-            if entry.active && entry.unlocked {
+        // Prefer the session we can actually capture: a local graphical session
+        // beats a text or remote one however active those are. Ranking on
+        // liveness alone let an ssh/tty session for the same uid shadow the
+        // desktop, and the capture path then refuses a text session — silently
+        // disabling screen accountability on a machine with a perfectly good
+        // desktop.
+        fn rank(entry: &SessionEntry) -> (u8, u8) {
+            let capturable =
+                !entry.remote && matches!(entry.kind, SessionKind::X11 | SessionKind::Wayland);
+            let live = if entry.active && entry.unlocked {
                 0
             } else if entry.active {
                 1
             } else {
                 2
-            }
+            };
+            (if capturable { 0 } else { 1 }, live)
         }
         let sessions = rguard(&self.sessions);
         let mut best: Option<(&str, &SessionEntry)> = None;
@@ -523,28 +532,31 @@ impl SessionRegistry {
     /// | any active + unlocked | unlocked | allow |
     /// | active but all locked | locked | [`GateReason::SessionLocked`] |
     /// | none active (locked or not) | switched away | [`GateReason::SessionInactive`] |
+    /// How many sessions this registry currently tracks for `uid`. Zero while a
+    /// user is signed in and the bus is up means the daemon has lost track of
+    /// the session — a defect worth warning about, not a routine skip.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn tracked_for_uid(&self, uid: u32) -> usize {
+        rguard(&self.sessions)
+            .values()
+            .filter(|entry| entry.uid == uid)
+            .count()
+    }
+
     pub fn gate(&self, uid: u32) -> Option<GateReason> {
         if !self.bus_ok() {
             return None;
         }
-        let sessions = rguard(&self.sessions);
-        let mut any_session = false;
-        let mut any_active = false;
-        for entry in sessions.values().filter(|entry| entry.uid == uid) {
-            any_session = true;
-            if entry.active {
-                any_active = true;
-                if entry.unlocked {
-                    return None;
-                }
-            }
-        }
-        if !any_session {
-            Some(GateReason::SessionInactive)
-        } else if any_active {
-            Some(GateReason::SessionLocked)
-        } else {
-            Some(GateReason::SessionInactive)
+        // Evaluate the *same* session the backend will use. Gating on "any
+        // active session for this uid" could allow a tick because an ssh login
+        // was alive while the selected (graphical) session was locked, and vice
+        // versa it could block capture for a uid whose only session is a text
+        // one — the two decisions must not disagree.
+        match self.session_for_uid(uid) {
+            None => Some(GateReason::SessionInactive),
+            Some(entry) if !entry.active => Some(GateReason::SessionInactive),
+            Some(entry) if !entry.unlocked => Some(GateReason::SessionLocked),
+            Some(_) => None,
         }
     }
 }
@@ -714,6 +726,16 @@ async fn read_remote(proxy: &Proxy<'_>) -> bool {
     proxy.get_property::<bool>("Remote").await.unwrap_or(false)
 }
 
+/// logind `User` — the struct `(uo)`: the owning uid and the user object path.
+/// Only the uid is wanted; the type matters, because asking for a `u32` here
+/// fails to deserialize and silently loses the session.
+async fn read_uid(proxy: &Proxy<'_>) -> Result<u32, zbus::Error> {
+    let (uid, _user) = proxy
+        .get_property::<(u32, zbus::zvariant::OwnedObjectPath)>("User")
+        .await?;
+    Ok(uid)
+}
+
 /// logind `Leader` — the session leader's PID. Absent on very old logind (and
 /// `0` when the leader has exited); both mean "no PID to inspect", not an
 /// error worth logging.
@@ -743,13 +765,22 @@ async fn watch_session(
     };
     let uid = match uid {
         Some(uid) => uid,
-        None => match proxy.get_property::<u32>("User").await {
-            Ok(uid) => uid,
-            Err(err) => {
-                tracing::warn!("logind: session {path} has no User property: {err}");
-                return;
+        None => {
+            // logind's `User` property is the struct `(uo)`: the uid *and* the
+            // user's object path. Reading it as a bare `u32` always fails, which
+            // used to make this function bail out and silently drop every
+            // session discovered through the `SessionNew` signal — i.e. every
+            // session created after the daemon starts, which on a normal boot is
+            // all of them (the daemon starts before the user logs in). Capture
+            // then skipped every tick as "session inactive" forever.
+            match read_uid(&proxy).await {
+                Ok(uid) => uid,
+                Err(err) => {
+                    tracing::warn!("logind: session {path} has no usable User property: {err}");
+                    return;
+                }
             }
-        },
+        }
     };
 
     // Initial reads; with `CacheProperties::Lazily` (zbus default) they also
@@ -998,6 +1029,112 @@ mod tests {
             display: None,
             remote: false,
             leader: None,
+        }
+    }
+
+    /// The live defect, as a regression test: an ssh/tty session for the same
+    /// uid must not shadow the desktop. Ranking on liveness alone picked
+    /// whichever path sorted first, so a machine the operator was also ssh'd
+    /// into captured nothing (the backend then refuses a text session).
+    #[test]
+    fn session_for_uid_prefers_a_capturable_session_over_a_live_tty() {
+        let mut tty = entry(1000, true, true, SessionKind::Tty);
+        tty.remote = true;
+        let registry = SessionRegistry::new();
+        // Path order deliberately sorts the tty session first ("_3" < "c"), which
+        // is exactly how the real logind paths look.
+        registry.upsert_entry("/org/freedesktop/login1/session/_35", tty);
+        registry.upsert_entry(
+            "/org/freedesktop/login1/session/c2",
+            entry(1000, true, true, SessionKind::X11),
+        );
+        let chosen = registry.session_for_uid(1000).expect("a session");
+        assert_eq!(chosen.kind, SessionKind::X11, "the desktop session wins");
+        assert!(chosen.capturable());
+    }
+
+    /// A locked desktop beats an unlocked ssh login: the gate must judge the
+    /// session that will actually be captured, not any session that happens to
+    /// be active.
+    #[test]
+    fn gate_follows_the_session_that_would_be_captured() {
+        let registry = SessionRegistry::new();
+        registry.upsert_entry(
+            "/org/freedesktop/login1/session/_35",
+            entry(1000, true, true, SessionKind::Tty),
+        );
+        registry.upsert_entry(
+            "/org/freedesktop/login1/session/c2",
+            entry(1000, true, false, SessionKind::Wayland),
+        );
+        assert_eq!(registry.gate(1000), Some(GateReason::SessionLocked));
+
+        // With the desktop gone, the tty session is all that is left and it is
+        // active+unlocked → allowed (a text session has no screen, and the
+        // capture path skips it separately on `capturable`).
+        let registry = SessionRegistry::new();
+        registry.upsert_entry(
+            "/org/freedesktop/login1/session/_35",
+            entry(1000, true, true, SessionKind::Tty),
+        );
+        assert_eq!(registry.gate(1000), None);
+    }
+
+    /// `tracked_for_uid` is what turns "the session is inactive" into an
+    /// actionable warning about a broken registry.
+    #[test]
+    fn tracked_for_uid_counts_only_that_uid() {
+        let registry = SessionRegistry::new();
+        registry.upsert_entry("s1", entry(1000, true, true, SessionKind::X11));
+        registry.upsert_entry("s2", entry(1000, false, true, SessionKind::Tty));
+        registry.upsert_entry("s3", entry(1001, true, true, SessionKind::X11));
+        assert_eq!(registry.tracked_for_uid(1000), 2);
+        assert_eq!(registry.tracked_for_uid(1001), 1);
+        assert_eq!(registry.tracked_for_uid(1002), 0);
+    }
+
+    /// Reads the `User` property off a *real* logind session. This is the test
+    /// that would have caught the original bug: logind returns the struct
+    /// `(uo)`, so asking for a bare `u32` always failed, and every session
+    /// discovered through the `SessionNew` signal (i.e. every login after the
+    /// daemon started, which on a normal boot is all of them) was dropped.
+    ///
+    /// Skips where there is no system bus or no session to read, like the rest
+    /// of the suite's environment-dependent checks.
+    #[tokio::test]
+    async fn read_uid_matches_logind_on_a_real_bus() {
+        let Ok(conn) = Connection::system().await else {
+            eprintln!("skipping: no system bus");
+            return;
+        };
+        let sessions = match list_sessions(&conn).await {
+            Ok(sessions) if !sessions.is_empty() => sessions,
+            Ok(_) => {
+                eprintln!("skipping: logind reports no sessions");
+                return;
+            }
+            Err(err) => {
+                eprintln!("skipping: ListSessions failed: {err}");
+                return;
+            }
+        };
+        for (id, uid, path) in sessions.iter().take(3) {
+            let proxy = Proxy::new(&conn, LOGIN1_DEST, path.as_str(), SESSION_IFACE)
+                .await
+                .expect("session proxy");
+            let read = read_uid(&proxy)
+                .await
+                .unwrap_or_else(|err| panic!("read_uid({id}) failed: {err}"));
+            assert_eq!(
+                read, *uid,
+                "session {id}: User property disagrees with ListSessions"
+            );
+            // Pin the shape of the bug: the old read was `u32`, which cannot
+            // deserialize `(uo)` and so failed on *every* session.
+            assert!(
+                proxy.get_property::<u32>("User").await.is_err(),
+                "logind's User property changed shape; the (uo) handling can be simplified"
+            );
         }
     }
 
