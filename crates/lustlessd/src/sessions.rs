@@ -89,9 +89,19 @@ pub struct SessionEntry {
     /// logind `Type` — which display server the session runs.
     pub kind: SessionKind,
     /// logind `Display` (e.g. `:0`), empty for text sessions.
+    ///
+    /// Empty on plenty of desktops (`loginctl show-session … -p Display`
+    /// prints `Display=` under XFCE/Zorin Lite), so [`SessionEnv::resolve`]
+    /// treats this as a *hint* and recovers the real value from the session
+    /// leader's environment when it is missing.
     pub display: Option<String>,
     /// logind `Remote` — a remote/SSH session must never be captured (§13).
     pub remote: bool,
+    /// logind `Leader` — the session leader's PID (`u`), or `None` when the
+    /// property is absent/zero (old logind, or the leader already exited).
+    /// The leader's `/proc/<pid>/environ` is the only place the real `DISPLAY`
+    /// and `XAUTHORITY` live when logind's `Display` is empty.
+    pub leader: Option<u32>,
 }
 
 impl SessionEntry {
@@ -153,8 +163,28 @@ impl SessionEnv {
 
     /// Derives the environment using the real home directory of `uid`
     /// ([`home_for`]).
+    ///
+    /// Unlike [`derive`](Self::derive) this also *recovers* `DISPLAY` and
+    /// `XAUTHORITY` from the session's processes: logind's `Display` is empty
+    /// on many desktops, and without a real `DISPLAY` the X11 backend cannot
+    /// even connect (`$DISPLAY variable not set`). The leader — and, when its
+    /// own environment lacks the value, its descendants — carry the values the
+    /// session's display server was actually exported to.
     pub fn resolve(uid: u32, entry: &SessionEntry) -> SessionEnv {
-        SessionEnv::derive(uid, entry, home_for(uid).as_deref())
+        let mut env = SessionEnv::derive(uid, entry, home_for(uid).as_deref());
+        env.display = select_display(
+            entry.kind,
+            entry.display.clone(),
+            environ_from_session(entry.leader, "DISPLAY").as_deref(),
+        );
+        // logind exposes no `XAUTHORITY` at all, so the leader's environment is
+        // the only *authoritative* source; the ordered file probe (already in
+        // `env.xauthority`) remains the fallback when no process carries it.
+        env.xauthority = select_xauthority(
+            environ_from_session(entry.leader, "XAUTHORITY").as_deref(),
+            env.xauthority,
+        );
+        env
     }
 
     /// Writes the session values into the process environment so the backends'
@@ -210,6 +240,143 @@ fn probe_xauthority(candidates: &[PathBuf]) -> Option<PathBuf> {
     candidates.iter().find(|path| path.exists()).cloned()
 }
 
+/// Extracts `key` from a NUL-separated `/proc/<pid>/environ` blob.
+///
+/// Pure and bounds-safe by construction: the blob is *not* guaranteed UTF-8
+/// (paths, translated variables), so it is scanned as bytes and only the
+/// matching value is decoded. An entry with no `=` is skipped; only the first
+/// `=` separates name from value, so a value containing `=` (`A=b=c`) survives
+/// intact. A matching key whose value is not UTF-8 yields `None` rather than a
+/// lossy replacement or a panic.
+fn parse_environ(bytes: &[u8], key: &str) -> Option<String> {
+    for entry in bytes.split(|&byte| byte == 0) {
+        let Some(eq) = entry.iter().position(|&byte| byte == b'=') else {
+            continue;
+        };
+        if entry[..eq] == *key.as_bytes() {
+            return std::str::from_utf8(&entry[eq + 1..])
+                .ok()
+                .map(str::to_string);
+        }
+    }
+    None
+}
+
+/// [`parse_environ`] treating an empty value (`DISPLAY=`) as absent — an empty
+/// `DISPLAY` is as unusable as no `DISPLAY` and must trigger recovery.
+fn environ_value(bytes: &[u8], key: &str) -> Option<String> {
+    parse_environ(bytes, key).filter(|value| !value.is_empty())
+}
+
+/// Reads `/proc/<pid>/environ`; `None` when unreadable (process gone, or
+/// hidepid). Logind's leader/descendants belong to the user, but the daemon
+/// runs as root, so these reads normally succeed.
+fn read_environ(pid: u32) -> Option<Vec<u8>> {
+    std::fs::read(format!("/proc/{pid}/environ")).ok()
+}
+
+/// Bound on how many descendants are visited while hunting for a variable.
+/// Enumerating `/proc` once is unavoidable for a PPID search (there is no
+/// children index), but this caps the work so an enormous process tree cannot
+/// stall the capture task.
+const MAX_DESCENDANTS: usize = 512;
+
+/// `/proc/<pid>/stat` field 4 is the PPID. Field 2 (`comm`) may itself contain
+/// spaces and parentheses, so the line is split after its *last* `)`.
+fn ppid_of(pid: u32) -> Option<u32> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let rest = stat.rsplit_once(')')?.1;
+    rest.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// Breadth-first list of `root`'s descendants, capped at [`MAX_DESCENDANTS`].
+fn descendants(root: u32) -> Vec<u32> {
+    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if let Some(ppid) = ppid_of(pid) {
+            children.entry(ppid).or_default().push(pid);
+        }
+    }
+    let mut found = Vec::new();
+    let mut queue = vec![root];
+    while let Some(pid) = queue.pop() {
+        let Some(kids) = children.get(&pid) else {
+            continue;
+        };
+        for &kid in kids {
+            if found.len() >= MAX_DESCENDANTS {
+                return found;
+            }
+            found.push(kid);
+            queue.push(kid);
+        }
+    }
+    found
+}
+
+/// The first `/proc/<pid>/environ` blob (session leader first, then its
+/// descendants) that defines `key`. Returns the whole blob so a caller can ask
+/// for a second variable from the same process without another `/proc` sweep.
+/// Descendants are only walked when the leader's own environment lacks `key`.
+fn environ_from_session(leader: Option<u32>, key: &str) -> Option<Vec<u8>> {
+    let leader = leader?;
+    if let Some(bytes) = read_environ(leader) {
+        if environ_value(&bytes, key).is_some() {
+            return Some(bytes);
+        }
+    }
+    descendants(leader)
+        .into_iter()
+        .filter_map(read_environ)
+        .find(|bytes| environ_value(bytes, key).is_some())
+}
+
+/// Pure `DISPLAY` selection, in preference order: logind's `Display` → the
+/// session process environment → `:0` for an `X11` session.
+///
+/// The `:0` guess is deliberate: an X11 session almost always has a local
+/// display, and a *wrong* guess merely makes the backend report a connection
+/// error (visible, retried), whereas returning `None` guarantees
+/// `$DISPLAY variable not set` and capture never runs at all. A guess beats a
+/// guaranteed failure. Wayland sessions are never guessed — they need
+/// `XDG_RUNTIME_DIR` and the session bus, not `DISPLAY`.
+fn select_display(
+    kind: SessionKind,
+    logind: Option<String>,
+    session_environ: Option<&[u8]>,
+) -> Option<String> {
+    if let Some(logind) = logind {
+        return Some(logind);
+    }
+    if let Some(display) = session_environ.and_then(|bytes| environ_value(bytes, "DISPLAY")) {
+        return Some(display);
+    }
+    if kind == SessionKind::X11 {
+        return Some(":0".to_string());
+    }
+    None
+}
+
+/// `XAUTHORITY` selection: the session process environment (the only
+/// authoritative source — logind has no such property) wins over `probed`,
+/// which is the ordered [`xauthority_candidates`] probe result.
+fn select_xauthority(session_environ: Option<&[u8]>, probed: Option<PathBuf>) -> Option<PathBuf> {
+    session_environ
+        .and_then(|bytes| environ_value(bytes, "XAUTHORITY"))
+        .map(PathBuf::from)
+        .or(probed)
+}
+
 /// Home directory of `uid` from `/etc/passwd`. Deliberately dependency-free:
 /// local desktop sessions are in `/etc/passwd`; NSS/LDAP-provided homes are
 /// not resolved (they would need `getpwuid`/a new dependency).
@@ -250,7 +417,8 @@ impl SessionRegistry {
     }
 
     /// Records (or refreshes) one session. Keeps the legacy flag-only shape:
-    /// `Type`/`Display`/`Remote` default to `Unknown`/`None`/`false`.
+    /// `Type`/`Display`/`Remote`/`Leader` default to
+    /// `Unknown`/`None`/`false`/`None`.
     ///
     /// Test-only: production code always has the logind `Type`/`Display`/`Remote`
     /// properties in hand and goes through [`Self::upsert_entry`].
@@ -265,6 +433,7 @@ impl SessionRegistry {
                 kind: SessionKind::Unknown,
                 display: None,
                 remote: false,
+                leader: None,
             },
         );
     }
@@ -545,6 +714,16 @@ async fn read_remote(proxy: &Proxy<'_>) -> bool {
     proxy.get_property::<bool>("Remote").await.unwrap_or(false)
 }
 
+/// logind `Leader` — the session leader's PID. Absent on very old logind (and
+/// `0` when the leader has exited); both mean "no PID to inspect", not an
+/// error worth logging.
+async fn read_leader(proxy: &Proxy<'_>) -> Option<u32> {
+    match proxy.get_property::<u32>("Leader").await {
+        Ok(pid) if pid > 0 => Some(pid),
+        _ => None,
+    }
+}
+
 /// Per-session watcher: initial state, `Lock`/`Unlock` signals,
 /// `Active`/`LockedHint` property changes and a 5 s refresh.
 async fn watch_session(
@@ -583,6 +762,7 @@ async fn watch_session(
     let mut kind = read_kind(&proxy).await;
     let mut session_display = read_display(&proxy).await;
     let mut remote = read_remote(&proxy).await;
+    let mut leader = read_leader(&proxy).await;
     registry.upsert_entry(
         &path,
         SessionEntry {
@@ -592,12 +772,13 @@ async fn watch_session(
             kind,
             display: session_display.clone(),
             remote,
+            leader,
         },
     );
     update_active_hint(&registry, &state);
     tracing::debug!(
         "logind: watching session {path} (uid {uid}, active {active}, unlocked {unlocked}, \
-         type {kind:?}, session_display {session_display:?}, remote {remote})"
+         type {kind:?}, session_display {session_display:?}, remote {remote}, leader {leader:?})"
     );
 
     let mut lock_stream = match proxy.receive_signal("Lock").await {
@@ -672,6 +853,7 @@ async fn watch_session(
                         kind = read_kind(&proxy).await;
                         session_display = read_display(&proxy).await;
                         remote = read_remote(&proxy).await;
+                        leader = read_leader(&proxy).await;
                         registry.upsert_entry(
                             &path,
                             SessionEntry {
@@ -681,6 +863,7 @@ async fn watch_session(
                                 kind,
                                 display: session_display.clone(),
                                 remote,
+                                leader,
                             },
                         );
                     }
@@ -814,6 +997,7 @@ mod tests {
             kind,
             display: None,
             remote: false,
+            leader: None,
         }
     }
 
@@ -854,6 +1038,126 @@ mod tests {
             env.xauthority, None,
             "no candidate exists for this fake uid"
         );
+    }
+
+    #[test]
+    fn parse_environ_separates_entries_on_nul() {
+        let blob = b"PATH=/usr/bin:/bin\0DISPLAY=:1\0XAUTHORITY=/run/user/1000/xauth\0";
+        assert_eq!(parse_environ(blob, "DISPLAY").as_deref(), Some(":1"));
+        assert_eq!(
+            parse_environ(blob, "XAUTHORITY").as_deref(),
+            Some("/run/user/1000/xauth")
+        );
+        assert_eq!(
+            parse_environ(blob, "PATH").as_deref(),
+            Some("/usr/bin:/bin")
+        );
+        // A trailing NUL is the normal shape and must not create an entry.
+        assert_eq!(
+            parse_environ(b"DISPLAY=:2\0", "DISPLAY").as_deref(),
+            Some(":2")
+        );
+    }
+
+    #[test]
+    fn parse_environ_missing_key_is_none() {
+        let blob = b"PATH=/usr/bin\0DISPLAY=:1\0";
+        assert_eq!(parse_environ(blob, "XAUTHORITY"), None);
+        assert_eq!(parse_environ(blob, "DISPLAYS"), None, "keys match exactly");
+        assert_eq!(parse_environ(b"", "DISPLAY"), None);
+        assert_eq!(parse_environ(b"\0\0", "DISPLAY"), None, "no `=` anywhere");
+    }
+
+    #[test]
+    fn parse_environ_empty_value_is_present_but_empty() {
+        // The parser reports an empty value; `environ_value` treats it as
+        // absent so recovery still runs.
+        let blob = b"DISPLAY=\0DISPLAYED=1\0";
+        assert_eq!(parse_environ(blob, "DISPLAY").as_deref(), Some(""));
+        assert_eq!(environ_value(blob, "DISPLAY"), None);
+    }
+
+    #[test]
+    fn parse_environ_value_may_contain_equals() {
+        // Only the first `=` separates name from value.
+        let blob = b"QT_PLUGIN_PATH=/a=b:/c=d\0";
+        assert_eq!(
+            parse_environ(blob, "QT_PLUGIN_PATH").as_deref(),
+            Some("/a=b:/c=d")
+        );
+    }
+
+    #[test]
+    fn parse_environ_non_utf8_never_panics() {
+        // A value with an invalid UTF-8 byte: the matching key must return
+        // `None` rather than panic or lossily decode.
+        let blob = b"DISPLAY=\xff\xfe\0PATH=/bin\0";
+        assert_eq!(parse_environ(blob, "DISPLAY"), None);
+        // A non-UTF-8 entry we do not ask for must not break later lookups.
+        assert_eq!(parse_environ(blob, "PATH").as_deref(), Some("/bin"));
+        // A non-UTF-8 *name* is skipped without panicking.
+        let blob = b"\xff\xfe=x\0DISPLAY=:3\0";
+        assert_eq!(parse_environ(blob, "DISPLAY").as_deref(), Some(":3"));
+    }
+
+    #[test]
+    fn resolve_recovers_display_from_leader_environ() {
+        // The live defect: logind's `Display` is empty, so the only source of
+        // the session's real display is the leader's `/proc/<pid>/environ`.
+        // The selection is exercised through the pure parser with the environ
+        // bytes injected — no `/proc`, no bus, no root.
+        let leader_environ = b"PATH=/usr/bin\0DISPLAY=:1\0XAUTHORITY=/run/user/1000/xauth\0";
+        assert_eq!(
+            select_display(SessionKind::X11, None, Some(leader_environ)).as_deref(),
+            Some(":1"),
+            "empty logind Display must fall back to the leader's DISPLAY"
+        );
+        // logind's value still wins when it is present.
+        assert_eq!(
+            select_display(SessionKind::X11, Some(":0".into()), Some(leader_environ)).as_deref(),
+            Some(":0")
+        );
+        // An empty DISPLAY in the environment is ignored, like a missing one.
+        assert_eq!(
+            select_display(SessionKind::X11, None, Some(b"DISPLAY=\0")).as_deref(),
+            Some(":0"),
+            "empty DISPLAY falls through to the X11 guess"
+        );
+        // Wayland never guesses a DISPLAY.
+        assert_eq!(select_display(SessionKind::Wayland, None, None), None);
+        assert_eq!(select_display(SessionKind::Tty, None, None), None);
+    }
+
+    #[test]
+    fn resolve_guesses_x11_display_when_nothing_is_known() {
+        // `SessionEnv::resolve` with no logind Display and no leader (so no
+        // `/proc` read at all) still yields a usable display for an X11
+        // session: a guess that the backend can refute beats the guaranteed
+        // `$DISPLAY variable not set` failure.
+        let uid = 59_999;
+        let env = SessionEnv::resolve(uid, &entry(uid, true, true, SessionKind::X11));
+        assert_eq!(env.display.as_deref(), Some(":0"));
+        // A Wayland session gets no guess (it needs the runtime dir + bus).
+        let env = SessionEnv::resolve(uid, &entry(uid, true, true, SessionKind::Wayland));
+        assert_eq!(env.display, None);
+    }
+
+    #[test]
+    fn xauthority_environ_wins_over_the_file_probe() {
+        let probed = PathBuf::from("/run/user/1000/gdm/Xauthority");
+        let environ = b"XAUTHORITY=/home/alice/.Xauthority\0";
+        assert_eq!(
+            select_xauthority(Some(environ), Some(probed.clone())),
+            Some(PathBuf::from("/home/alice/.Xauthority")),
+            "the session's own XAUTHORITY is authoritative"
+        );
+        // No environment value → the probe result stands.
+        assert_eq!(
+            select_xauthority(Some(b"DISPLAY=:0\0"), Some(probed.clone())),
+            Some(probed.clone())
+        );
+        assert_eq!(select_xauthority(None, Some(probed.clone())), Some(probed));
+        assert_eq!(select_xauthority(None, None), None);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "lustless-capture"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 description = "LustLess screenstate capture: X11/Wayland backends, spool writer, manifest schema 3.0.0, jittered scheduler"
 license = "Apache-2.0"

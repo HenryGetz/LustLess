@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build lustless-0.1.9-r0.apk (Alpine — musl + OpenRC; PACKAGING-MATRIX §2).
+# Build lustless-0.1.10-r0.apk (Alpine — musl + OpenRC; PACKAGING-MATRIX §2).
 #
 #   packaging/build-apk.sh               full build: compile the musl
 #                                        binaries in an alpine container
@@ -19,10 +19,10 @@
 # accepts. abuild requires a non-root builder user, a generated signing key
 # (abuild-keygen), and sudo (abuild re-execs itself for root steps).
 #
-# Output: ./lustless-0.1.9-r0.apk
+# Output: ./lustless-0.1.10-r0.apk
 set -euo pipefail
 
-VERSION="0.1.9"
+VERSION="0.1.10"
 PKGREL="0"
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"

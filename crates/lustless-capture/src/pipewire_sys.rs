@@ -1394,6 +1394,35 @@ mod tests {
     use super::*;
     use std::mem::MaybeUninit;
 
+    /// Resolve the *system* library and its symbols. This is the one test that
+    /// exercises `load()` (the shipped path — the fake-library test uses
+    /// `load_named`) against whatever PipeWire the machine actually has, so it
+    /// is the runtime half of the version-tolerance claim: the same binary is
+    /// built on the Zorin 17 / Ubuntu 22.04 baseline (the container build) and
+    /// must resolve cleanly against whatever a user's desktop ships.
+    ///
+    /// A machine without PipeWire (a text-mode server, a CLI-only distro)
+    /// skips: the binary must still load there, which is why the backend
+    /// degrades to X11/XWayland instead of failing to start. A library that is
+    /// present but missing one of the symbols we dlsym is a hard failure —
+    /// that is the case this test exists to catch.
+    #[test]
+    fn load_resolves_the_system_library_when_pipewire_is_installed() {
+        match load() {
+            Ok(lib) => {
+                let version = lib.version();
+                assert!(
+                    !version.is_empty(),
+                    "pw_get_library_version returned an empty string"
+                );
+            }
+            Err(PwError::Unavailable(_)) => {
+                eprintln!("skipping: libpipewire-0.3.so.0 is not installed on this machine");
+            }
+            Err(err) => panic!("the system PipeWire library did not resolve: {err}"),
+        }
+    }
+
     #[test]
     fn load_named_missing_library_returns_err() {
         let res = load_named("/nonexistent/libpipewire-0.3.so.0");

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build lustless_0.1.9_amd64.deb.
+# Build lustless_0.1.10_amd64.deb.
 #
 #   packaging/build-deb.sh               full build: compile the Cargo
 #                                        workspace against the glibc 2.35
@@ -13,14 +13,14 @@
 #                                        2.35-compatible; repackage only)
 #
 # Runnable from anywhere; paths resolve relative to the repo root. Output:
-#   ./lustless_0.1.9_amd64.deb
+#   ./lustless_0.1.10_amd64.deb
 #
 # Model bundle: staged automatically by packaging/stage.sh (see that script).
 # Without it the package still builds — screen accountability needs the
 # bundle at runtime (see packaging/README.md). No placeholder artifacts.
 set -euo pipefail
 
-VERSION="0.1.9"
+VERSION="0.1.10"
 ARCH="amd64"
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
